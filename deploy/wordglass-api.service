@@ -1,0 +1,23 @@
+[Unit]
+Description=WordGlass FastAPI backend
+After=network.target
+
+[Service]
+Type=simple
+User=wordglass
+Group=wordglass
+WorkingDirectory=/opt/wordglass/backend
+EnvironmentFile=/opt/wordglass/backend/.env
+ExecStart=/opt/wordglass/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=3
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/opt/wordglass/backend/data
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
