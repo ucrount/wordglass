@@ -45,17 +45,27 @@ apt-get install -y -qq git python3-venv python3-pip nodejs npm nginx curl openss
 # ──────────────────────────────────────────────────────────────────────────────
 c_blue "==> [2/5] Preparing /opt/wordglass"
 if ! id -u "$APP_USER" &>/dev/null; then
-  useradd --system --create-home --home-dir "$APP_DIR" --shell /usr/sbin/nologin "$APP_USER"
+  # --no-create-home avoids /etc/skel polluting $APP_DIR; we mkdir manually
+  useradd --system --no-create-home --home-dir "$APP_DIR" --shell /usr/sbin/nologin "$APP_USER"
 fi
 mkdir -p "$APP_DIR"
 chown "$APP_USER:$APP_USER" "$APP_DIR"
 
-if [[ ! -d "$APP_DIR/.git" ]]; then
+if [[ -d "$APP_DIR/.git" ]]; then
+  c_yellow "    Updating repo…"
+  sudo -u "$APP_USER" git -C "$APP_DIR" fetch -q origin
+  sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard -q origin/main
+elif [[ -n "$(ls -A "$APP_DIR" 2>/dev/null)" ]]; then
+  c_yellow "    Adopting existing non-empty $APP_DIR…"
+  sudo -u "$APP_USER" git -C "$APP_DIR" init -q -b main
+  sudo -u "$APP_USER" git -C "$APP_DIR" remote add origin "$REPO_URL" 2>/dev/null || \
+    sudo -u "$APP_USER" git -C "$APP_DIR" remote set-url origin "$REPO_URL"
+  sudo -u "$APP_USER" git -C "$APP_DIR" fetch -q origin
+  sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard -q origin/main
+  sudo -u "$APP_USER" git -C "$APP_DIR" branch --set-upstream-to=origin/main main 2>/dev/null || true
+else
   c_yellow "    Cloning repo (first install)…"
   sudo -u "$APP_USER" git clone -q "$REPO_URL" "$APP_DIR"
-else
-  c_yellow "    Updating repo…"
-  sudo -u "$APP_USER" git -C "$APP_DIR" pull -q --ff-only
 fi
 
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/backend/data"
