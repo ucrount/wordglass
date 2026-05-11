@@ -1,123 +1,132 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
-import { api, type Stats, type WordBrief } from "../api";
+import { api, type HeatmapData, type Stats, type WordBrief } from "../api";
 import AddBar from "../components/AddBar.vue";
+import Heatmap from "../components/Heatmap.vue";
 import WordCard from "../components/WordCard.vue";
 
 const stats = ref<Stats>({ total: 0, due_today: 0, mastered: 0, added_this_week: 0 });
 const recent = ref<WordBrief[]>([]);
+const heat = ref<HeatmapData>({ days: {}, since: "" });
 const loadError = ref("");
 
 async function refresh() {
   try {
-    const [s, list] = await Promise.all([api.stats(), api.listWords({ limit: 12 })]);
+    const [s, list, h] = await Promise.all([
+      api.stats(),
+      api.listWords({ limit: 12 }),
+      api.heatmap(35),
+    ]);
     stats.value = s;
     recent.value = list;
+    heat.value = h;
     loadError.value = "";
   } catch (e: any) {
     loadError.value = e.message || "加载失败";
   }
 }
 
-const FEATURES = [
-  {
-    icon: "🪄",
-    title: "AI 一次给齐",
-    body: "粘个单词，自动返回中文释义、IPA 音标、词性标签，外加 3 个真实场景下的英文例句和翻译。",
-  },
-  {
-    icon: "🗓️",
-    title: "智能阶梯复习",
-    body: "答错的明天再见、答对的隔得越来越远（1d / 3d / 7d / 21d / 60d），到时间它会出现在练习列表，你不用管。",
-  },
-  {
-    icon: "🎮",
-    title: "字母方格练习",
-    body: "看中文敲英文，一个字母一个方格，敲对就亮、敲错就抖。比单纯背诵留下来的肌肉记忆深得多。",
-  },
-  {
-    icon: "🎧",
-    title: "听写训练",
-    body: "浏览器原生发音引擎自动朗读单词，听完直接敲，按 S 重听。强化「听到立刻反应」的能力。",
-  },
-];
+const activeDays = computed(() => Object.keys(heat.value.days).length);
+const totalActions = computed(() =>
+  Object.values(heat.value.days).reduce((a, b) => a + b, 0)
+);
 
 onMounted(refresh);
 </script>
 
 <template>
   <div class="dashboard">
-    <!-- ─── Hero ─────────────────────────────────────────── -->
-    <section class="hero">
-      <div class="badge stagger" style="--stagger: 0">
-        <span class="dot-anim" />
-        AI 翻译 · 即时例句 · 智能复习
+    <!-- Page header -->
+    <header class="page-head stagger" style="--stagger: 0">
+      <div>
+        <h1>主页</h1>
+        <p class="muted">今天来背几个词，反复练，直到看到就脱口而出。</p>
+      </div>
+    </header>
+
+    <!-- Row 1: Due review (left) + Heatmap (right) -->
+    <section class="row row-top">
+      <div class="widget glass stagger" style="--stagger: 1">
+        <div class="widget-head">
+          <h2>今日待复习</h2>
+          <RouterLink v-if="stats.due_today > 0" to="/practice" class="link-arrow">
+            开始练习 →
+          </RouterLink>
+        </div>
+        <div class="due-body">
+          <div class="due-number" :class="{ none: stats.due_today === 0 }">
+            <span class="big">{{ stats.due_today }}</span>
+            <span class="unit">个</span>
+          </div>
+          <p v-if="stats.due_today === 0" class="muted small">
+            今天没有待复习的词。添加新词或明天再来。
+          </p>
+          <p v-else class="muted small">
+            到点要再见一面的词，趁热打铁巩固一下吧。
+          </p>
+        </div>
+        <AddBar @added="refresh" />
       </div>
 
-      <h1 class="title stagger" style="--stagger: 1">
-        把陌生的单词，<br />
-        逼成你的 <span class="highlight">掌握</span>
-      </h1>
-
-      <p class="tagline stagger muted" style="--stagger: 2">
-        AI 自动准备翻译、音标和真实例句，三种练习模式陪你反复敲，
-        <br class="mobile-hide" />
-        直到看到就能脱口而出。
-      </p>
-
-      <div class="cta-wrap stagger" style="--stagger: 3">
-        <AddBar @added="refresh" />
+      <div class="widget glass stagger" style="--stagger: 2">
+        <div class="widget-head">
+          <h2>学习热力图</h2>
+          <span class="tertiary small">近 35 天</span>
+        </div>
+        <Heatmap :data="heat.days" :weeks="5" />
+        <div class="heat-stats">
+          <div>
+            <span class="big">{{ activeDays }}</span>
+            <span class="muted small"> 天有活动</span>
+          </div>
+          <div>
+            <span class="big">{{ totalActions }}</span>
+            <span class="muted small"> 次练习</span>
+          </div>
+        </div>
       </div>
     </section>
 
-    <!-- ─── Stats ────────────────────────────────────────── -->
-    <section class="stats">
-      <div class="stat glass stagger" style="--stagger: 4">
-        <div class="num">{{ stats.total }}</div>
-        <div class="label tertiary">单词总数</div>
+    <!-- Row 2: 4 stat cards -->
+    <section class="row stats">
+      <div class="stat glass stagger" style="--stagger: 3">
+        <div class="stat-icon">📚</div>
+        <div>
+          <div class="num">{{ stats.total }}</div>
+          <div class="muted small">单词总数</div>
+        </div>
       </div>
       <RouterLink
         to="/practice"
         class="stat glass clickable stagger"
         :class="{ pulse: stats.due_today > 0 }"
-        style="--stagger: 5"
+        style="--stagger: 4"
       >
-        <div class="num">{{ stats.due_today }}</div>
-        <div class="label tertiary">今日待复习</div>
+        <div class="stat-icon">🎯</div>
+        <div>
+          <div class="num">{{ stats.due_today }}</div>
+          <div class="muted small">今日待复习</div>
+        </div>
       </RouterLink>
+      <div class="stat glass stagger" style="--stagger: 5">
+        <div class="stat-icon">✨</div>
+        <div>
+          <div class="num">{{ stats.mastered }}</div>
+          <div class="muted small">已掌握</div>
+        </div>
+      </div>
       <div class="stat glass stagger" style="--stagger: 6">
-        <div class="num">{{ stats.mastered }}</div>
-        <div class="label tertiary">已掌握</div>
-      </div>
-      <div class="stat glass stagger" style="--stagger: 7">
-        <div class="num">{{ stats.added_this_week }}</div>
-        <div class="label tertiary">本周新增</div>
-      </div>
-    </section>
-
-    <!-- ─── Why ──────────────────────────────────────────── -->
-    <section class="why">
-      <div class="section-title">
-        <h2>为什么这样设计</h2>
-        <p class="muted">把「认识」练成「会用」，每个环节都有依据</p>
-      </div>
-      <div class="features">
-        <div
-          v-for="(f, i) in FEATURES"
-          :key="f.title"
-          class="feature glass"
-          :style="`--stagger: ${i}`"
-        >
-          <div class="feature-icon">{{ f.icon }}</div>
-          <h3>{{ f.title }}</h3>
-          <p class="muted">{{ f.body }}</p>
+        <div class="stat-icon">🚀</div>
+        <div>
+          <div class="num">{{ stats.added_this_week }}</div>
+          <div class="muted small">本周新增</div>
         </div>
       </div>
     </section>
 
-    <!-- ─── Recent ───────────────────────────────────────── -->
-    <section class="recent">
+    <!-- Row 3: Recent words -->
+    <section class="recent stagger" style="--stagger: 7">
       <div class="section-head">
         <h2>最近添加</h2>
         <RouterLink to="/library" class="link">查看全部 →</RouterLink>
@@ -129,7 +138,7 @@ onMounted(refresh);
       </div>
 
       <div v-else-if="recent.length === 0" class="empty glass-dim">
-        还没有保存的单词，在上面输入框里添加第一个吧 ✨
+        还没有保存的单词，在上方输入框里添加第一个吧 ✨
       </div>
 
       <div v-else class="grid">
@@ -143,96 +152,129 @@ onMounted(refresh);
 .dashboard {
   display: flex;
   flex-direction: column;
-  gap: 64px;
-  padding-bottom: 40px;
+  gap: 32px;
 }
 
-/* ─── Hero ─────────────────────────────────────────── */
-.hero {
-  text-align: center;
+/* Page head */
+.page-head h1 {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 4px;
+}
+
+.page-head p {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* Stagger utility (page-level, custom faster) */
+.stagger {
+  animation: stagger-fade 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--stagger, 0) * 0.08s);
+}
+
+@keyframes stagger-fade {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stagger { animation: none; }
+}
+
+/* Row 1: due + heatmap */
+.row-top {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .row-top { grid-template-columns: 1fr; }
+}
+
+.widget {
+  padding: 22px 24px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 24px;
-  padding: 56px 0 16px;
+  gap: 14px;
 }
 
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 16px;
-  border-radius: 999px;
-  background: var(--glass-bg-strong);
-  backdrop-filter: blur(16px);
-  border: 1px solid var(--glass-border);
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  letter-spacing: -0.005em;
-  box-shadow: var(--glass-shadow);
+.widget-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
 }
 
-.dot-anim {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--brand);
-  box-shadow: 0 0 0 0 var(--brand);
-  animation: ping 1.8s ease-in-out infinite;
-}
-
-@keyframes ping {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
-  50% { box-shadow: 0 0 0 5px rgba(139, 92, 246, 0); }
-}
-
-.title {
-  font-size: clamp(36px, 6.5vw, 64px);
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  line-height: 1.1;
+.widget-head h2 {
   margin: 0;
-  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
-.highlight {
-  position: relative;
-  display: inline-block;
-  background: linear-gradient(135deg, #8b5cf6 0%, #d946ef 50%, #ec4899 100%);
+.link-arrow {
+  text-decoration: none;
+  color: var(--brand);
+  font-size: 13px;
+  font-weight: 600;
+  transition: opacity 200ms ease;
+}
+
+.link-arrow:hover {
+  opacity: 0.75;
+}
+
+.due-body {
+  margin-bottom: 4px;
+}
+
+.due-number {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.due-number .big {
+  font-size: 48px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1;
+  background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
   -webkit-background-clip: text;
   background-clip: text;
-  -webkit-text-fill-color: transparent;
   color: transparent;
+  -webkit-text-fill-color: transparent;
 }
 
-.highlight::after {
-  content: "";
-  position: absolute;
-  left: -4%;
-  right: -4%;
-  bottom: 4%;
-  height: 14%;
-  background: linear-gradient(90deg, rgba(139, 92, 246, 0.25), rgba(236, 72, 153, 0.25));
-  border-radius: 6px;
-  z-index: -1;
-  filter: blur(2px);
+.due-number.none .big {
+  background: none;
+  color: var(--text-tertiary);
+  -webkit-text-fill-color: var(--text-tertiary);
 }
 
-.tagline {
-  font-size: clamp(15px, 1.6vw, 17px);
-  line-height: 1.55;
-  max-width: 580px;
-  margin: 0;
+.due-number .unit {
+  font-size: 14px;
+  color: var(--text-tertiary);
 }
 
-.cta-wrap {
-  width: 100%;
-  max-width: 560px;
-  margin-top: 8px;
+.small { font-size: 13px; }
+
+.heat-stats {
+  display: flex;
+  gap: 18px;
+  margin-top: 6px;
 }
 
-/* ─── Stats ────────────────────────────────────────── */
+.heat-stats .big {
+  font-size: 18px;
+  font-weight: 700;
+  margin-right: 2px;
+}
+
+/* Row 2: stats */
 .stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -240,10 +282,10 @@ onMounted(refresh);
 }
 
 .stat {
-  padding: 22px 24px;
+  padding: 18px 20px;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 14px;
   text-decoration: none;
   color: var(--text-primary);
   transition: transform 200ms ease, box-shadow 200ms ease;
@@ -254,15 +296,16 @@ onMounted(refresh);
   box-shadow: var(--glass-shadow-lg);
 }
 
-.stat .num {
-  font-size: 40px;
-  font-weight: 800;
-  letter-spacing: -0.025em;
+.stat-icon {
+  font-size: 28px;
   line-height: 1;
 }
 
-.stat .label {
-  font-size: 13px;
+.stat .num {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
 }
 
 .stat.pulse {
@@ -275,7 +318,7 @@ onMounted(refresh);
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  border: 2px solid var(--accent);
+  border: 2px solid var(--brand);
   opacity: 0.4;
   animation: pulse 1.8s ease-in-out infinite;
   pointer-events: none;
@@ -286,84 +329,30 @@ onMounted(refresh);
   50% { opacity: 0.8; transform: scale(1.02); }
 }
 
-/* ─── Section ─────────────────────────────────────── */
-.section-title {
-  text-align: center;
-  margin-bottom: 28px;
+@media (max-width: 900px) {
+  .stats { grid-template-columns: repeat(2, 1fr); }
 }
 
-.section-title h2,
-.section-head h2 {
-  font-size: clamp(24px, 3vw, 32px);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 0 0 6px;
-}
-
-.section-title p {
-  margin: 0;
-  font-size: 15px;
-}
-
-/* ─── Features ────────────────────────────────────── */
-.features {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-}
-
-.feature {
-  padding: 28px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  transition: transform 250ms ease, box-shadow 250ms ease, background 250ms ease;
-  animation: stagger-reveal 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
-  animation-delay: calc(var(--stagger, 0) * 0.1s + 0.2s);
-}
-
-@keyframes stagger-reveal {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.feature:hover {
-  transform: translateY(-4px);
-  box-shadow: var(--glass-shadow-lg);
-}
-
-.feature-icon {
-  font-size: 32px;
-  line-height: 1;
-  margin-bottom: 4px;
-}
-
-.feature h3 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.feature p {
-  margin: 0;
-  font-size: 13.5px;
-  line-height: 1.55;
-}
-
-/* ─── Recent ──────────────────────────────────────── */
+/* Recent words */
 .section-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
+}
+
+.section-head h2 {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
 }
 
 .link {
   text-decoration: none;
-  color: var(--accent);
-  font-size: 14px;
-  font-weight: 500;
+  color: var(--brand);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .grid {
@@ -372,26 +361,17 @@ onMounted(refresh);
   gap: 14px;
 }
 
-.empty, .error {
+.empty,
+.error {
   padding: 28px;
   text-align: center;
   color: var(--text-secondary);
 }
 .error { color: var(--danger); }
 
-/* ─── Responsive ──────────────────────────────────── */
-@media (max-width: 900px) {
-  .stats { grid-template-columns: repeat(2, 1fr); }
-  .features { grid-template-columns: repeat(2, 1fr); }
-}
-
 @media (max-width: 540px) {
-  .features { grid-template-columns: 1fr; }
-  .hero { padding-top: 32px; gap: 18px; }
-  .stat { padding: 18px; }
-  .stat .num { font-size: 32px; }
-  .feature { padding: 22px 20px; }
-  .mobile-hide { display: none; }
-  .dashboard { gap: 48px; }
+  .stat-icon { font-size: 22px; }
+  .stat .num { font-size: 22px; }
+  .due-number .big { font-size: 38px; }
 }
 </style>

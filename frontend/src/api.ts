@@ -36,6 +36,11 @@ export interface Stats {
   added_this_week: number;
 }
 
+export interface HeatmapData {
+  days: Record<string, number>; // "YYYY-MM-DD" → count
+  since: string;
+}
+
 export type ReviewResult = "again" | "hard" | "good" | "easy";
 
 export type ProviderType = "openai" | "anthropic" | "google";
@@ -119,6 +124,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const api = {
   health: () => request<{ ok: boolean }>("/api/health"),
   stats: () => request<Stats>("/api/stats"),
+  heatmap: (days = 35) => request<HeatmapData>(`/api/stats/heatmap?days=${days}`),
 
   addWord: (text: string) =>
     request<WordOut>("/api/words", { method: "POST", body: JSON.stringify({ text }) }),
