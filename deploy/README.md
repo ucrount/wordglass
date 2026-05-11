@@ -1,88 +1,78 @@
 # 部署到 VPS
 
-针对 Debian 12 / Ubuntu 22+ 的 4c4g VPS。前端构建后由 nginx 直接吐静态文件，后端 uvicorn 走 systemd 常驻，nginx 反代 `/api/*`。
+**适用：Debian 12 / Ubuntu 22+ 的 VPS。需要 root（sudo）权限。**
 
-## 一、首次安装
+## 一行命令安装
 
-```bash
-# 0. 装系统依赖
-sudo apt update
-sudo apt install -y git python3-venv python3-pip nodejs npm nginx
-
-# 1. 建专用用户和目录
-sudo useradd --system --create-home --home-dir /opt/wordglass --shell /usr/sbin/nologin wordglass
-sudo chown wordglass:wordglass /opt/wordglass
-
-# 2. 拉代码（替换成你自己的 repo 地址）
-sudo -u wordglass git clone https://github.com/<USER>/wordglass.git /opt/wordglass
-
-# 3. 配 AI key
-sudo -u wordglass cp /opt/wordglass/backend/.env.example /opt/wordglass/backend/.env
-sudo -u wordglass nano /opt/wordglass/backend/.env
-#    必填：AI_BASE_URL / AI_API_KEY / AI_MODEL
-#    建议：把 AUTH_TOKEN 设成一个随机串（前端 localStorage 里也要存同样的）
-
-# 4. 编辑 nginx 配置里的域名/IP
-sudo nano /opt/wordglass/deploy/nginx.conf
-#    把 server_name SERVER_NAME; 改成你的域名或 VPS IP
-
-# 5. 一键部署
-sudo bash /opt/wordglass/deploy/deploy.sh
-```
-
-完成后访问 `http://<你的IP或域名>` 即可。
-
-## 二、日常更新
+SSH 登录你的服务器，执行：
 
 ```bash
-cd /opt/wordglass
-sudo -u wordglass git pull
-sudo bash deploy/deploy.sh
+curl -fsSL https://raw.githubusercontent.com/ucrount/wordglass/main/deploy/install.sh | sudo bash
 ```
 
-## 三、常用排查命令
+脚本会问你 3 个问题：
+
+1. **AI provider** — 直接回车选 `deepseek`，或输入 `openai` / `ollama` / `custom`
+2. **AI_API_KEY** — 粘贴你的 key（必填）
+3. **Domain or IP** — 直接回车自动用本机公网 IP，或填你的域名
+
+之后全自动：装依赖 → 建用户 → 拉代码 → 装 Python 包 → 装 npm 包 → 编译前端 → 起 systemd → 重载 nginx。**结束时会打印访问地址和 AUTH_TOKEN**。
+
+## 第一次访问
+
+打开脚本最后给的地址 `http://<你的IP或域名>`。
+
+如果脚本生成了 AUTH_TOKEN（默认会），首次进页面后按 F12 打开控制台，粘贴脚本结尾给的那一行：
+
+```js
+localStorage.setItem('wordglass.token', '....')
+```
+
+刷新页面，开始用。
+
+## 更新代码
 
 ```bash
-# 后端日志（实时）
-sudo journalctl -u wordglass-api -f
-
-# 后端状态
-sudo systemctl status wordglass-api
-
-# 重启后端
-sudo systemctl restart wordglass-api
-
-# nginx 配置语法检查
-sudo nginx -t
-
-# 健康检查
-curl http://127.0.0.1:8000/api/health
+cd /opt/wordglass && sudo bash deploy/install.sh
 ```
 
-## 四、加 HTTPS（推荐）
+同一个脚本，检测到已存在就只做 `git pull` + 重建 + 重启。
+
+## 加 HTTPS
 
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
 sudo certbot --nginx -d your-domain.com
 ```
 
-certbot 会自动改 nginx 配置加上 443 监听 + 强制跳转。
-
-## 五、如果开了 AUTH_TOKEN
-
-前端默认从 `localStorage["wordglass.token"]` 读 token。打开浏览器控制台一次性设：
-
-```js
-localStorage.setItem("wordglass.token", "你在 .env 里设的 AUTH_TOKEN");
-```
-
-后续所有请求会自动带 `Authorization: Bearer ...`。
-
-## 六、备份数据库
-
-SQLite 文件在 `/opt/wordglass/backend/data/wordglass.db`，定期 cp 到别处或 rsync 到本地即可：
+## 排查
 
 ```bash
-# 拉到本地备份
+# 看后端日志
+sudo journalctl -u wordglass-api -f
+
+# 重启后端
+sudo systemctl restart wordglass-api
+
+# 健康检查
+curl http://127.0.0.1:8000/api/health
+```
+
+## 备份数据库
+
+SQLite 文件就一个：
+
+```bash
 rsync -avz user@your-vps:/opt/wordglass/backend/data/ ./wordglass-backup/
+```
+
+## 卸载
+
+```bash
+sudo systemctl disable --now wordglass-api
+sudo rm /etc/systemd/system/wordglass-api.service
+sudo rm /etc/nginx/sites-enabled/wordglass /etc/nginx/sites-available/wordglass
+sudo systemctl reload nginx
+sudo userdel -r wordglass
+sudo rm -rf /opt/wordglass
 ```
