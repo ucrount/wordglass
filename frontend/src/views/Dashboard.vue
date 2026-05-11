@@ -29,7 +29,7 @@ async function refreshStats() {
 
 async function refreshHeatmap() {
   try {
-    heat.value = await api.heatmap(35);
+    heat.value = await api.heatmap(84);
   } catch (e) {
     /* heatmap stays empty on error, not fatal */
   }
@@ -165,9 +165,9 @@ onMounted(refreshAll);
         <section class="widget glass stagger" style="--stagger: 3">
           <div class="widget-head">
             <h3>学习热力图</h3>
-            <span class="tertiary small">近 35 天</span>
+            <span class="tertiary small">近 12 周</span>
           </div>
-          <Heatmap :data="heat.days" :weeks="5" />
+          <Heatmap :data="heat.days" :weeks="12" />
           <div class="heat-stats">
             <div>
               <span class="big">{{ activeDays }}</span>
@@ -371,6 +371,25 @@ onMounted(refreshAll);
   flex-direction: column;
   gap: 10px;
   margin-top: 2px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 4px; /* room for scrollbar */
+}
+
+/* Custom scrollbar — discreet, glass-friendly */
+.examples::-webkit-scrollbar {
+  width: 6px;
+}
+.examples::-webkit-scrollbar-track {
+  background: transparent;
+}
+.examples::-webkit-scrollbar-thumb {
+  background: var(--hairline-strong);
+  border-radius: 999px;
+}
+.examples::-webkit-scrollbar-thumb:hover {
+  background: var(--brand);
+  opacity: 0.6;
 }
 
 .examples-head {

@@ -25,12 +25,10 @@ For the given English word or short phrase, return STRICT JSON with these fields
 }
 
 Rules for examples:
-- Generate FIVE examples, each from a CLEARLY DIFFERENT angle so the learner sees the word from multiple sides. Cover variety across:
+- Generate THREE examples, each from a CLEARLY DIFFERENT angle so the learner sees the word from multiple sides:
     1) everyday casual conversation (e.g. with friends/family)
     2) professional or workplace context
     3) written narrative / story / article
-    4) question or hypothetical scenario
-    5) formal speech, news, or academic writing
 - Each example MUST contain the target word (any inflection form is fine).
 - Examples must feel like real spoken or written modern English — not textbook clichés.
 - Translations should be natural Chinese, not literal word-by-word.

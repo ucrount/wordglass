@@ -5,10 +5,10 @@ const props = withDefaults(
   defineProps<{
     /** Map of "YYYY-MM-DD" → activity count */
     data: Record<string, number>;
-    /** Number of weeks to show (5 = ~35 days) */
+    /** Number of weeks to show (default 12 ≈ 3 months) */
     weeks?: number;
   }>(),
-  { weeks: 5 }
+  { weeks: 12 }
 );
 
 interface Cell {
@@ -34,18 +34,17 @@ function levelFor(count: number): 0 | 1 | 2 | 3 | 4 {
   return 4;
 }
 
-// Build a grid: 7 rows (Mon-Sun), N cols (weeks).
-// Each col is a calendar week; the rightmost col contains today.
+// Build a column-major grid: weeks (oldest → newest), each column is 7 days
+// (Mon..Sun). Rightmost column contains today.
 const grid = computed<Cell[][]>(() => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  // Walk back to the Monday of today's week to anchor the rightmost column
+
   const dayOfWeek = (today.getDay() + 6) % 7; // 0=Mon..6=Sun
   const sundayDelta = 6 - dayOfWeek;
   const lastSunday = new Date(today);
   lastSunday.setDate(lastSunday.getDate() + sundayDelta);
 
-  // Build weeks from oldest to newest
   const cols: Cell[][] = [];
   for (let w = props.weeks - 1; w >= 0; w--) {
     const col: Cell[] = [];
@@ -67,12 +66,11 @@ const grid = computed<Cell[][]>(() => {
   return cols;
 });
 
-// Month labels (show the month name on the column where a month begins)
+// Month labels: place above the column where a new month starts
 const monthLabels = computed<{ col: number; label: string }[]>(() => {
   const labels: { col: number; label: string }[] = [];
   let lastMonth = -1;
   grid.value.forEach((col, i) => {
-    // Use the Sunday (last cell) date as the column's representative date
     const monday = col[0].date;
     const m = new Date(monday).getMonth();
     if (m !== lastMonth) {
@@ -89,25 +87,25 @@ const dayLabels = ["", "二", "", "四", "", "六", ""];
 <template>
   <div class="heatmap">
     <!-- Month labels row -->
-    <div class="months-row">
-      <span class="day-spacer" />
-      <span
-        v-for="m in monthLabels"
-        :key="m.col + m.label"
-        class="month-label"
-        :style="`grid-column: ${m.col + 2}`"
-      >
-        {{ m.label }}
-      </span>
+    <div class="months">
+      <div class="day-spacer" />
+      <div class="month-cells">
+        <span
+          v-for="m in monthLabels"
+          :key="m.col + m.label"
+          class="month-label"
+          :style="`grid-column: ${m.col + 1}`"
+        >
+          {{ m.label }}
+        </span>
+      </div>
     </div>
 
-    <div class="grid-row">
-      <!-- Day labels column -->
+    <!-- Grid area: day labels + cells -->
+    <div class="grid-area">
       <div class="day-labels">
-        <span v-for="d in dayLabels" :key="d" class="day-label">{{ d }}</span>
+        <span v-for="(d, i) in dayLabels" :key="i" class="day-label">{{ d }}</span>
       </div>
-
-      <!-- Cells -->
       <div class="cells">
         <div v-for="(col, ci) in grid" :key="ci" class="col">
           <span
@@ -124,13 +122,14 @@ const dayLabels = ["", "二", "", "四", "", "六", ""];
       </div>
     </div>
 
+    <!-- Legend -->
     <div class="legend">
       <span class="legend-label">少</span>
-      <span class="cell level-0 small" />
-      <span class="cell level-1 small" />
-      <span class="cell level-2 small" />
-      <span class="cell level-3 small" />
-      <span class="cell level-4 small" />
+      <span class="cell-mini level-0" />
+      <span class="cell-mini level-1" />
+      <span class="cell-mini level-2" />
+      <span class="cell-mini level-3" />
+      <span class="cell-mini level-4" />
       <span class="legend-label">多</span>
     </div>
   </div>
@@ -138,61 +137,73 @@ const dayLabels = ["", "二", "", "四", "", "六", ""];
 
 <style scoped>
 .heatmap {
+  --gap: 5px;
+  --label-w: 26px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  width: 100%;
 }
 
-.months-row {
+/* Month labels row */
+.months {
   display: grid;
-  grid-template-columns: 28px repeat(v-bind("grid.length"), 16px);
-  gap: 4px;
+  grid-template-columns: var(--label-w) 1fr;
+  gap: var(--gap);
   font-size: 11px;
   color: var(--text-tertiary);
   height: 14px;
 }
 
-.day-spacer { grid-column: 1; }
-
-.month-label {
-  grid-row: 1;
-  white-space: nowrap;
+.month-cells {
+  display: grid;
+  grid-template-columns: repeat(v-bind("grid.length"), 1fr);
+  gap: var(--gap);
+  position: relative;
 }
 
-.grid-row {
-  display: flex;
-  gap: 4px;
+.month-label {
+  white-space: nowrap;
+  align-self: end;
+  letter-spacing: -0.01em;
+}
+
+/* Grid area */
+.grid-area {
+  display: grid;
+  grid-template-columns: var(--label-w) 1fr;
+  gap: var(--gap);
 }
 
 .day-labels {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 24px;
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  gap: var(--gap);
 }
 
 .day-label {
-  height: 16px;
   font-size: 10px;
   color: var(--text-tertiary);
   display: flex;
   align-items: center;
+  justify-content: flex-start;
 }
 
 .cells {
-  display: flex;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: repeat(v-bind("grid.length"), 1fr);
+  gap: var(--gap);
+  min-width: 0;
 }
 
 .col {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  gap: var(--gap);
 }
 
 .cell {
-  width: 16px;
-  height: 16px;
+  aspect-ratio: 1;
   border-radius: 4px;
   background: rgba(0, 0, 0, 0.06);
   transition: transform 120ms ease, box-shadow 200ms ease;
@@ -203,8 +214,9 @@ const dayLabels = ["", "二", "", "四", "", "六", ""];
 }
 
 .cell:hover {
-  transform: scale(1.18);
+  transform: scale(1.12);
   box-shadow: 0 0 0 2px var(--glass-border);
+  z-index: 2;
 }
 
 .cell.future {
@@ -221,19 +233,31 @@ const dayLabels = ["", "二", "", "四", "", "六", ""];
 .cell.level-3 { background: rgba(139, 92, 246, 0.80); }
 .cell.level-4 { background: rgba(139, 92, 246, 1); box-shadow: 0 0 8px rgba(139, 92, 246, 0.5); }
 
+/* Legend */
 .legend {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-top: 6px;
+  margin-top: 4px;
   font-size: 10px;
   color: var(--text-tertiary);
 }
 
 .legend-label { margin: 0 4px; }
 
-.cell.small {
-  width: 10px;
-  height: 10px;
+.cell-mini {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.06);
 }
+
+[data-theme="dark"] .cell-mini {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.cell-mini.level-1 { background: rgba(139, 92, 246, 0.30); }
+.cell-mini.level-2 { background: rgba(139, 92, 246, 0.55); }
+.cell-mini.level-3 { background: rgba(139, 92, 246, 0.80); }
+.cell-mini.level-4 { background: rgba(139, 92, 246, 1); }
 </style>
