@@ -42,7 +42,7 @@ async function submit() {
         @keyup.enter="submit"
       />
       <button class="btn btn-primary" :disabled="loading || !text.trim()" @click="submit">
-        {{ loading ? "翻译中…" : "保存" }}
+        {{ loading ? "翻译中…" : "翻译" }}
       </button>
     </div>
     <Transition name="fade">

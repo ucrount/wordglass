@@ -243,7 +243,7 @@ onMounted(refreshAll);
 .body-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.65fr) minmax(340px, 1fr);
-  gap: 16px;
+  gap: 32px;
   flex: 1;
   min-height: 0;
 }

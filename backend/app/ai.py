@@ -25,10 +25,18 @@ For the given English word or short phrase, return STRICT JSON with these fields
 }
 
 Rules for examples:
-- Generate THREE examples, each from a CLEARLY DIFFERENT angle so the learner sees the word from multiple sides:
-    1) everyday casual conversation (e.g. with friends/family)
-    2) professional or workplace context
-    3) written narrative / story / article
+- Generate FIVE examples, ORDERED FROM EASIEST TO HARDEST so the learner
+  ramps up gradually. Each example must use a clearly different context:
+    1) Simplest — short, basic vocabulary, present tense, everyday context.
+       Aim for ~6-10 words and structure a beginner could read.
+    2) Casual conversation — natural spoken English with friends/family,
+       a bit longer, may include common phrasal verbs.
+    3) Professional or workplace context — typical business email,
+       meeting, or report sentence. Moderate complexity.
+    4) Written narrative or descriptive — storytelling, reflection,
+       or vivid description with richer vocabulary.
+    5) Formal / academic / news writing — complex sentence structure,
+       sophisticated diction, the kind found in articles or essays.
 - Each example MUST contain the target word (any inflection form is fine).
 - Examples must feel like real spoken or written modern English — not textbook clichés.
 - Translations should be natural Chinese, not literal word-by-word.
