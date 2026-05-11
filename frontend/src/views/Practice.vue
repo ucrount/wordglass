@@ -3,15 +3,16 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { api, type ReviewResult, type WordOut } from "../api";
 import { isSpeechSupported, speak, stopSpeaking } from "../composables/tts";
+import LetterSlots from "../components/LetterSlots.vue";
 
-type Mode = "zh-to-en" | "en-to-zh" | "dictation";
-type Stage = "word" | "sentence" | "rated";
+type Tab = "word" | "sentence" | "listen";
+type Direction = "zh-to-en" | "en-to-zh";
 type Status = "typing" | "correct" | "wrong" | "revealed";
 
-const MODES: { value: Mode; label: string; hint: string }[] = [
-  { value: "zh-to-en", label: "中 → 英", hint: "看中文释义，敲出英文单词" },
-  { value: "en-to-zh", label: "英 → 中", hint: "看英文单词，敲出中文释义" },
-  { value: "dictation", label: "听写", hint: "听发音，敲出英文单词" },
+const TABS: { value: Tab; label: string; icon: string; hint: string }[] = [
+  { value: "word", label: "单词练习", icon: "📝", hint: "拼写单个单词" },
+  { value: "sentence", label: "句子练习", icon: "💬", hint: "翻译完整例句" },
+  { value: "listen", label: "听力练习", icon: "🎧", hint: "听写英文单词" },
 ];
 
 const RATINGS: { value: ReviewResult; label: string; key: string; cls: string }[] = [
@@ -21,48 +22,51 @@ const RATINGS: { value: ReviewResult; label: string; key: string; cls: string }[
   { value: "easy", label: "熟练", key: "4", cls: "easy" },
 ];
 
-const mode = ref<Mode>(
-  (localStorage.getItem("wordglass.practiceMode") as Mode) || "zh-to-en"
+const tab = ref<Tab>(
+  (localStorage.getItem("wordglass.practiceTab") as Tab) || "word"
 );
+const direction = ref<Direction>(
+  (localStorage.getItem("wordglass.practiceDir") as Direction) || "zh-to-en"
+);
+
 const queue = ref<WordOut[]>([]);
 const current = ref(0);
-const stage = ref<Stage>("word");
 const status = ref<Status>("typing");
-const input = ref("");
-const shake = ref(false);
+const textInput = ref(""); // for modes that don't use LetterSlots
+const showHint = ref(false); // when Tab pressed, fill slots with answer
 const submitting = ref(false);
 const loading = ref(true);
 const loadError = ref("");
 const session = ref({ done: 0, correct: 0 });
-const inputRef = ref<HTMLInputElement | null>(null);
+const slotsRef = ref<InstanceType<typeof LetterSlots> | null>(null);
+const textRef = ref<HTMLTextAreaElement | HTMLInputElement | null>(null);
 
 const word = computed<WordOut | null>(() => queue.value[current.value] ?? null);
 const total = computed(() => queue.value.length);
 const finished = computed(() => total.value > 0 && current.value >= total.value);
 const ttsSupported = isSpeechSupported();
 
-// ─── Cloze (sentence stage) ────────────────────────────────────────────────
-const cloze = computed(() => {
-  const w = word.value;
-  if (!w || !w.examples?.length) return null;
-  const ex = w.examples[0];
-  const safe = w.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`\\b${safe}[\\w']*\\b`, "i");
-  const match = ex.en.match(re);
-  if (!match) return null;
-  return {
-    en: ex.en,
-    zh: ex.zh,
-    blanked: ex.en.replace(re, "_____"),
-    target: match[0],
-  };
+// The first usable example for sentence/listen modes
+const example = computed(() => {
+  if (!word.value?.examples?.length) return null;
+  return word.value.examples[0];
 });
 
-const hasExample = computed(() => cloze.value !== null);
+// Whether the current tab+direction needs an example
+const needsExample = computed(() => tab.value === "sentence");
 
-// ─── Validation helpers ───────────────────────────────────────────────────
+// Effective input mode
+const useLetterSlots = computed(
+  () => (tab.value === "word" && direction.value === "zh-to-en") || tab.value === "listen"
+);
+
+// ─── Validation ───────────────────────────────────────────────────────────
 function normalize(s: string) {
-  return s.trim().toLowerCase().replace(/[.,!?;:'"…，。！？；：""'']/g, "");
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/[.,!?;:'"…—\-()\[\]，。！？；：""''《》、（）—]/g, "")
+    .replace(/\s+/g, " ");
 }
 
 function checkEn(typed: string, target: string): boolean {
@@ -71,17 +75,24 @@ function checkEn(typed: string, target: string): boolean {
 }
 
 function checkZh(typed: string, translation: string): boolean {
-  const trimmed = typed.trim();
-  if (!trimmed) return false;
-  // Translations look like "生动的；逼真的，活泼的"; accept any of the chunks
-  // OR a substring match for lenient grading
+  const t = typed.trim();
+  if (!t) return false;
   const parts = translation
     .split(/[；;,，、\/]/)
     .map((p) => p.replace(/[\.。]+$/, "").trim())
     .filter(Boolean);
-  return parts.some(
-    (p) => p === trimmed || p.includes(trimmed) || trimmed.includes(p)
-  );
+  return parts.some((p) => p === t || p.includes(t) || t.includes(p));
+}
+
+function checkSentenceZh(typed: string, target: string): boolean {
+  const t = typed.replace(/\s+/g, "").trim();
+  const tgt = target.replace(/\s+/g, "").trim();
+  if (!t) return false;
+  // Loose: match if user typed ≥70% of the chars in target's order
+  if (t === tgt) return true;
+  // Fallback: simple inclusion check
+  const onlyChars = (s: string) => s.replace(/[，。！？；："'《》、（）.,!?;:'"…]/g, "");
+  return onlyChars(t) === onlyChars(tgt);
 }
 
 // ─── Data loading ─────────────────────────────────────────────────────────
@@ -100,106 +111,91 @@ async function load() {
   }
 }
 
-function focusInput() {
-  nextTick(() => inputRef.value?.focus());
+function focusInputAfterRender() {
+  nextTick(() => {
+    if (useLetterSlots.value) {
+      // LetterSlots listens to window keydown, nothing to focus
+    } else if (textRef.value) {
+      textRef.value.focus();
+    }
+  });
 }
 
 function resetCard() {
-  stage.value = "word";
   status.value = "typing";
-  input.value = "";
+  textInput.value = "";
+  showHint.value = false;
   stopSpeaking();
-  focusInput();
-  // Auto-play audio for dictation mode
-  if (mode.value === "dictation" && word.value) {
+  if (slotsRef.value) slotsRef.value.reset();
+  focusInputAfterRender();
+  if (tab.value === "listen" && word.value) {
     setTimeout(() => speak(word.value!.text), 250);
   }
 }
 
-// ─── Word stage submit / reveal ───────────────────────────────────────────
-function submitWord() {
-  if (status.value === "correct" || status.value === "revealed") {
-    advanceFromWord();
-    return;
-  }
+// ─── Submit / reveal / advance ────────────────────────────────────────────
+function submit() {
+  if (status.value === "correct" || status.value === "revealed") return;
   const w = word.value;
   if (!w) return;
   let ok = false;
-  if (mode.value === "en-to-zh") {
-    ok = checkZh(input.value, w.translation);
-  } else {
-    ok = checkEn(input.value, w.text);
+  if (tab.value === "word") {
+    if (direction.value === "zh-to-en") {
+      // LetterSlots emits 'complete' which calls onSlotsComplete directly
+      // This path runs if user clicks the explicit submit button without LetterSlots having completed
+      return;
+    }
+    ok = checkZh(textInput.value, w.translation);
+  } else if (tab.value === "sentence") {
+    const ex = example.value;
+    if (!ex) return;
+    if (direction.value === "zh-to-en") {
+      ok = checkEn(textInput.value, ex.en);
+    } else {
+      ok = checkSentenceZh(textInput.value, ex.zh);
+    }
+  } else if (tab.value === "listen") {
+    // LetterSlots emits 'complete' for listen mode too
+    return;
   }
   if (ok) {
     status.value = "correct";
-    setTimeout(() => speak(w.text), 80);
-    setTimeout(advanceFromWord, 700);
+    if (w && tab.value !== "sentence") {
+      setTimeout(() => speak(w.text), 80);
+    }
   } else {
     status.value = "wrong";
-    shake.value = true;
-    setTimeout(() => (shake.value = false), 380);
     setTimeout(() => (status.value = "typing"), 600);
   }
 }
 
-function revealWord() {
+function onSlotsComplete() {
+  status.value = "correct";
+  if (word.value) setTimeout(() => speak(word.value!.text), 80);
+}
+
+function onSlotsWrong() {
+  // LetterSlots already shakes; just keep status as typing
+}
+
+function reveal() {
   if (status.value === "correct") return;
   status.value = "revealed";
-  if (word.value) setTimeout(() => speak(word.value!.text), 80);
-  setTimeout(advanceFromWord, 900);
+  if (useLetterSlots.value) {
+    showHint.value = true;
+  }
+  if (word.value && tab.value !== "sentence") setTimeout(() => speak(word.value!.text), 80);
 }
 
-function advanceFromWord() {
-  if (hasExample.value) {
-    stage.value = "sentence";
-    status.value = "typing";
-    input.value = "";
-    focusInput();
-  } else {
-    stage.value = "rated";
-  }
-}
-
-// ─── Sentence stage submit / reveal ───────────────────────────────────────
-function submitSentence() {
-  if (status.value === "correct" || status.value === "revealed") {
-    stage.value = "rated";
-    return;
-  }
-  const target = cloze.value?.target;
-  if (!target) {
-    stage.value = "rated";
-    return;
-  }
-  if (checkEn(input.value, target)) {
-    status.value = "correct";
-    if (word.value) setTimeout(() => speak(word.value!.text), 80);
-    setTimeout(() => (stage.value = "rated"), 700);
-  } else {
-    status.value = "wrong";
-    shake.value = true;
-    setTimeout(() => (shake.value = false), 380);
-    setTimeout(() => (status.value = "typing"), 600);
-  }
-}
-
-function revealSentence() {
-  if (status.value === "correct") return;
-  status.value = "revealed";
-  if (word.value) setTimeout(() => speak(word.value!.text), 80);
-  setTimeout(() => (stage.value = "rated"), 900);
-}
-
-// ─── Rating ───────────────────────────────────────────────────────────────
 async function rate(result: ReviewResult) {
   if (submitting.value || !word.value) return;
   submitting.value = true;
   if (result === "good" || result === "easy") session.value.correct += 1;
   session.value.done += 1;
   try {
-    await api.submitReview(word.value.id, mode.value, result);
+    await api.submitReview(word.value.id, `${tab.value}_${direction.value}`, result);
   } catch {
-    /* ignore — local progress wins */
+    /* ignore */
   }
   setTimeout(() => {
     current.value += 1;
@@ -208,24 +204,26 @@ async function rate(result: ReviewResult) {
   }, 220);
 }
 
-// ─── Actions glue ─────────────────────────────────────────────────────────
-function onPrimaryAction() {
-  if (stage.value === "word") submitWord();
-  else if (stage.value === "sentence") submitSentence();
-}
-
-function onReveal() {
-  if (stage.value === "word") revealWord();
-  else if (stage.value === "sentence") revealSentence();
-}
-
 function replayAudio() {
   if (word.value) speak(word.value.text);
 }
 
 // ─── Watchers ─────────────────────────────────────────────────────────────
-watch(mode, (m) => {
-  localStorage.setItem("wordglass.practiceMode", m);
+watch(tab, (t) => {
+  localStorage.setItem("wordglass.practiceTab", t);
+  // When switching tab, skip cards that don't have examples needed
+  if (needsExample.value && !example.value && word.value) {
+    // Try to find a word that has examples
+    const found = queue.value.findIndex(
+      (w, i) => i >= current.value && w.examples && w.examples.length > 0
+    );
+    if (found >= 0) current.value = found;
+  }
+  resetCard();
+});
+
+watch(direction, (d) => {
+  localStorage.setItem("wordglass.practiceDir", d);
   resetCard();
 });
 
@@ -235,26 +233,26 @@ function handleKey(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName;
   const inField = tag === "INPUT" || tag === "TEXTAREA";
 
-  // S → replay audio (only when not typing, since 's' is a letter)
   if (!inField && (e.key === "s" || e.key === "S")) {
     e.preventDefault();
     replayAudio();
     return;
   }
-  // Tab → reveal/skip
-  if (e.key === "Tab" && stage.value !== "rated") {
+  // Tab → reveal
+  if (e.key === "Tab" && status.value !== "correct") {
     e.preventDefault();
-    onReveal();
+    reveal();
     return;
   }
-  // 1-4 → ratings (only when rating)
-  if (stage.value === "rated") {
+  // 1-4 → ratings (only after answered)
+  if (status.value === "correct" || status.value === "revealed") {
     const r = RATINGS.find((rr) => rr.key === e.key);
     if (r) {
       e.preventDefault();
       rate(r.value);
     }
   }
+  // Enter in textarea is handled by @keyup.enter on the element itself
 }
 
 onMounted(() => {
@@ -269,46 +267,36 @@ onUnmounted(() => {
 
 <template>
   <div class="practice">
-    <!-- Header (only while reviewing) -->
-    <div v-if="!loading && !loadError && total > 0 && !finished" class="header">
-      <div class="modes glass">
-        <button
-          v-for="m in MODES"
-          :key="m.value"
-          :class="{ active: mode === m.value }"
-          :title="m.hint"
-          @click="mode = m.value"
-        >
-          {{ m.label }}
-        </button>
-      </div>
-      <div class="progress">
+    <!-- Top tabs -->
+    <div v-if="!loading && !loadError && total > 0 && !finished" class="tabs glass">
+      <button
+        v-for="t in TABS"
+        :key="t.value"
+        class="tab"
+        :class="{ active: tab === t.value }"
+        :title="t.hint"
+        @click="tab = t.value"
+      >
+        <span class="tab-icon">{{ t.icon }}</span>
+        <span class="tab-label">{{ t.label }}</span>
+      </button>
+      <span class="progress">
         <span class="num">{{ current + 1 }}</span>
         <span class="tertiary"> / {{ total }}</span>
-      </div>
+      </span>
     </div>
 
-    <!-- Stage dots -->
+    <!-- Direction switch (only for word/sentence tabs) -->
     <div
-      v-if="!loading && !loadError && total > 0 && !finished"
-      class="stage-dots"
+      v-if="!loading && !loadError && total > 0 && !finished && tab !== 'listen'"
+      class="direction"
     >
-      <span :class="['dot', stage === 'word' ? 'active' : 'done']">
-        ① 单词
-      </span>
-      <template v-if="hasExample">
-        <span class="arrow tertiary">→</span>
-        <span
-          :class="[
-            'dot',
-            stage === 'sentence' ? 'active' : stage === 'rated' ? 'done' : '',
-          ]"
-        >
-          ② 例句
-        </span>
-      </template>
-      <span class="arrow tertiary">→</span>
-      <span :class="['dot', stage === 'rated' ? 'active' : '']">③ 评分</span>
+      <button :class="{ active: direction === 'zh-to-en' }" @click="direction = 'zh-to-en'">
+        中 → 英
+      </button>
+      <button :class="{ active: direction === 'en-to-zh' }" @click="direction = 'en-to-zh'">
+        英 → 中
+      </button>
     </div>
 
     <!-- Loading -->
@@ -341,7 +329,7 @@ onUnmounted(() => {
         <div class="dot-sep tertiary">·</div>
         <div><span class="big good">{{ session.correct }}</span><span class="muted"> 答对</span></div>
       </div>
-      <div class="actions">
+      <div class="state-actions">
         <button class="btn btn-primary" @click="load">再来一组</button>
         <RouterLink to="/" class="btn btn-ghost">回首页</RouterLink>
       </div>
@@ -350,131 +338,149 @@ onUnmounted(() => {
     <!-- Active card -->
     <div v-else-if="word" class="card-stage">
       <Transition name="card" mode="out-in">
-        <div :key="word.id + '-' + mode + '-' + stage" class="flash glass-strong" :class="{ shake }">
-          <!-- ━━━━━ STAGE: WORD ━━━━━ -->
-          <template v-if="stage === 'word'">
-            <!-- Prompt by mode -->
-            <template v-if="mode === 'zh-to-en'">
-              <div class="prompt-hint tertiary">敲出英文</div>
-              <div class="big-zh">{{ word.translation || "（无翻译）" }}</div>
-              <div v-if="word.pos" class="pos">{{ word.pos }}</div>
-            </template>
-
-            <template v-else-if="mode === 'en-to-zh'">
-              <div class="prompt-hint tertiary">敲出中文释义</div>
-              <div class="word-display">
-                <span class="word-text">{{ word.text }}</span>
-                <button
-                  v-if="ttsSupported"
-                  class="speaker"
-                  type="button"
-                  title="重听 (S)"
-                  @click="replayAudio"
-                >🔊</button>
+        <div :key="word.id + '-' + tab + '-' + direction" class="flash glass-strong">
+          <!-- ━━━━━ TAB: 单词 (zh→en) ━━━━━ -->
+          <template v-if="tab === 'word' && direction === 'zh-to-en'">
+            <div class="prompt-hint tertiary">敲出英文单词</div>
+            <div class="big-zh">{{ word.translation || "（无翻译）" }}</div>
+            <div v-if="word.pos" class="pos">{{ word.pos }}</div>
+            <LetterSlots
+              ref="slotsRef"
+              :target="word.text"
+              :disabled="status === 'correct'"
+              :show-hint="showHint"
+              @complete="onSlotsComplete"
+              @wrong="onSlotsWrong"
+            />
+            <Transition name="reveal">
+              <div v-if="status === 'correct' || status === 'revealed'" class="answer-panel">
+                <div class="row-flex">
+                  <span class="answer-word">{{ word.text }}</span>
+                  <button v-if="ttsSupported" class="speaker-small" @click="replayAudio">🔊</button>
+                  <span v-if="word.phonetic" class="phonetic">{{ word.phonetic }}</span>
+                </div>
               </div>
-              <div v-if="word.phonetic" class="phonetic">{{ word.phonetic }}</div>
-            </template>
+            </Transition>
+          </template>
 
-            <template v-else>
-              <div class="prompt-hint tertiary">听写：敲出听到的单词</div>
-              <button
-                v-if="ttsSupported"
-                class="big-speaker"
-                type="button"
-                title="重听 (S)"
-                @click="replayAudio"
-              >🔊</button>
-              <div v-else class="muted">浏览器不支持语音合成，请使用其他模式</div>
-            </template>
-
-            <!-- Input -->
-            <div class="input-row" :class="status">
+          <!-- ━━━━━ TAB: 单词 (en→zh) ━━━━━ -->
+          <template v-else-if="tab === 'word' && direction === 'en-to-zh'">
+            <div class="prompt-hint tertiary">敲出中文释义</div>
+            <div class="word-display">
+              <span class="word-text">{{ word.text }}</span>
+              <button v-if="ttsSupported" class="speaker" @click="replayAudio" title="S 重听">🔊</button>
+            </div>
+            <div v-if="word.phonetic" class="phonetic">{{ word.phonetic }}</div>
+            <div class="text-input-row" :class="status">
               <input
-                ref="inputRef"
-                v-model="input"
+                ref="textRef"
+                v-model="textInput"
                 class="answer-input"
-                :type="mode === 'en-to-zh' ? 'text' : 'text'"
-                :placeholder="mode === 'en-to-zh' ? '中文释义…' : '英文单词…'"
+                type="text"
+                placeholder="中文释义…"
                 :disabled="status === 'correct' || status === 'revealed'"
                 autocomplete="off"
-                autocapitalize="off"
-                autocorrect="off"
-                spellcheck="false"
-                @keyup.enter="onPrimaryAction"
+                @keyup.enter="submit"
               />
-              <Transition name="pop">
-                <span v-if="status === 'correct'" class="mark ok">✓</span>
-                <span v-else-if="status === 'wrong'" class="mark err">✗</span>
-              </Transition>
             </div>
+            <Transition name="reveal">
+              <div v-if="status === 'correct' || status === 'revealed'" class="answer-panel">
+                <div class="answer-zh-big">{{ word.translation }}</div>
+              </div>
+            </Transition>
+          </template>
 
-            <!-- Reveal panel: show after correct or skipped -->
+          <!-- ━━━━━ TAB: 句子 (no example available) ━━━━━ -->
+          <template v-else-if="tab === 'sentence' && !example">
+            <div class="big-emoji">📭</div>
+            <p class="muted">这个词暂时没有例句</p>
+            <p class="tertiary small">直接评分跳过，或切到单词/听力模式</p>
+          </template>
+
+          <!-- ━━━━━ TAB: 句子 (zh→en) ━━━━━ -->
+          <template v-else-if="tab === 'sentence' && direction === 'zh-to-en' && example">
+            <div class="prompt-hint tertiary">把这句中文翻译成英文</div>
+            <div class="sentence-zh-prompt">{{ example.zh }}</div>
+            <div class="word-hint tertiary">提示词：<span class="word-text-small">{{ word.text }}</span></div>
+            <div class="text-input-row" :class="status">
+              <textarea
+                ref="textRef"
+                v-model="textInput"
+                class="answer-input answer-textarea"
+                rows="2"
+                placeholder="英文句子…"
+                :disabled="status === 'correct' || status === 'revealed'"
+                autocomplete="off"
+                @keyup.ctrl.enter="submit"
+                @keyup.meta.enter="submit"
+              ></textarea>
+            </div>
+            <Transition name="reveal">
+              <div v-if="status === 'correct' || status === 'revealed'" class="answer-panel">
+                <div class="sentence-full">{{ example.en }}</div>
+              </div>
+            </Transition>
+          </template>
+
+          <!-- ━━━━━ TAB: 句子 (en→zh) ━━━━━ -->
+          <template v-else-if="tab === 'sentence' && direction === 'en-to-zh' && example">
+            <div class="prompt-hint tertiary">把这句英文翻译成中文</div>
+            <div class="sentence-en-prompt">{{ example.en }}</div>
+            <button v-if="ttsSupported" class="speaker-mini" @click="replayAudio">🔊 听一下</button>
+            <div class="text-input-row" :class="status">
+              <textarea
+                ref="textRef"
+                v-model="textInput"
+                class="answer-input answer-textarea"
+                rows="2"
+                placeholder="中文句子…"
+                :disabled="status === 'correct' || status === 'revealed'"
+                autocomplete="off"
+                @keyup.ctrl.enter="submit"
+                @keyup.meta.enter="submit"
+              ></textarea>
+            </div>
+            <Transition name="reveal">
+              <div v-if="status === 'correct' || status === 'revealed'" class="answer-panel">
+                <div class="sentence-full">{{ example.zh }}</div>
+              </div>
+            </Transition>
+          </template>
+
+          <!-- ━━━━━ TAB: 听力 ━━━━━ -->
+          <template v-else-if="tab === 'listen'">
+            <div class="prompt-hint tertiary">听发音，敲出英文单词</div>
+            <button
+              v-if="ttsSupported"
+              class="big-speaker"
+              @click="replayAudio"
+              title="S 重听"
+            >🔊</button>
+            <div v-else class="muted">浏览器不支持语音合成，请用其他模式</div>
+            <LetterSlots
+              ref="slotsRef"
+              :target="word.text"
+              :disabled="status === 'correct' || !ttsSupported"
+              :show-hint="showHint"
+              @complete="onSlotsComplete"
+              @wrong="onSlotsWrong"
+            />
             <Transition name="reveal">
               <div v-if="status === 'correct' || status === 'revealed'" class="answer-panel">
                 <div class="row-flex">
                   <span class="answer-word">{{ word.text }}</span>
                   <span v-if="word.phonetic" class="phonetic">{{ word.phonetic }}</span>
                 </div>
-                <div class="answer-zh">{{ word.translation }}</div>
+                <div class="answer-zh-big">{{ word.translation }}</div>
               </div>
             </Transition>
-          </template>
-
-          <!-- ━━━━━ STAGE: SENTENCE ━━━━━ -->
-          <template v-else-if="stage === 'sentence' && cloze">
-            <div class="prompt-hint tertiary">把缺失的单词敲出来</div>
-            <div class="sentence">{{ cloze.blanked }}</div>
-            <div v-if="cloze.zh" class="sentence-zh tertiary">{{ cloze.zh }}</div>
-
-            <div class="input-row" :class="status">
-              <input
-                ref="inputRef"
-                v-model="input"
-                class="answer-input"
-                type="text"
-                placeholder="填入单词…"
-                :disabled="status === 'correct' || status === 'revealed'"
-                autocomplete="off"
-                autocapitalize="off"
-                autocorrect="off"
-                spellcheck="false"
-                @keyup.enter="onPrimaryAction"
-              />
-              <Transition name="pop">
-                <span v-if="status === 'correct'" class="mark ok">✓</span>
-                <span v-else-if="status === 'wrong'" class="mark err">✗</span>
-              </Transition>
-            </div>
-
-            <Transition name="reveal">
-              <div v-if="status === 'correct' || status === 'revealed'" class="answer-panel">
-                <div class="answer-word">{{ cloze.target }}</div>
-                <div class="sentence-full tertiary">{{ cloze.en }}</div>
-              </div>
-            </Transition>
-          </template>
-
-          <!-- ━━━━━ STAGE: RATED ━━━━━ -->
-          <template v-else>
-            <div class="prompt-hint tertiary">这道题感觉如何？</div>
-            <div class="word-display">
-              <span class="word-text" style="font-size: clamp(34px, 6vw, 44px)">{{ word.text }}</span>
-              <button
-                v-if="ttsSupported"
-                class="speaker"
-                type="button"
-                @click="replayAudio"
-              >🔊</button>
-            </div>
-            <div v-if="word.phonetic" class="phonetic">{{ word.phonetic }}</div>
-            <div class="answer-zh" style="font-size: 18px">{{ word.translation }}</div>
           </template>
         </div>
       </Transition>
 
       <!-- Actions row -->
       <div class="actions">
-        <template v-if="stage === 'rated'">
+        <template v-if="status === 'correct' || status === 'revealed' || (tab === 'sentence' && !example)">
           <div class="ratings">
             <button
               v-for="r in RATINGS"
@@ -490,27 +496,24 @@ onUnmounted(() => {
           </div>
         </template>
         <template v-else>
-          <button
-            class="btn btn-ghost"
-            type="button"
-            @click="onReveal"
-            :disabled="status === 'correct'"
-          >
+          <button class="btn btn-ghost" type="button" @click="reveal">
             显示答案 <span class="kbd">Tab</span>
           </button>
           <button
+            v-if="!useLetterSlots"
             class="btn btn-primary"
             type="button"
-            @click="onPrimaryAction"
-            :disabled="status === 'correct' || status === 'revealed'"
+            @click="submit"
           >
-            提交 <span class="kbd">Enter</span>
+            提交 <span class="kbd">{{ tab === 'sentence' ? '⌘ Enter' : 'Enter' }}</span>
           </button>
         </template>
       </div>
 
       <div class="hint tertiary">
-        快捷键：Enter 提交 · Tab 显示答案 · S 重听 · 1 2 3 4 评分
+        <span v-if="useLetterSlots">直接键盘敲字母 · </span>
+        <span v-else>Enter 提交 · </span>
+        Tab 显示答案 · S 重听 · 1 2 3 4 评分
       </div>
     </div>
   </div>
@@ -520,29 +523,28 @@ onUnmounted(() => {
 .practice {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
   min-height: 70vh;
 }
 
-/* ─── Header ───────────────────────────────────────── */
-.header {
+/* ─── Top tabs ─────────────────────────────────────── */
+.tabs {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.modes {
-  display: inline-flex;
-  padding: 4px;
+  padding: 5px;
   border-radius: 999px;
+  gap: 4px;
+  position: relative;
 }
 
-.modes button {
+.tab {
   appearance: none;
   background: transparent;
   border: none;
-  padding: 8px 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
   border-radius: 999px;
   font: inherit;
   font-weight: 500;
@@ -552,85 +554,86 @@ onUnmounted(() => {
   transition: background 200ms ease, color 200ms ease, box-shadow 200ms ease;
 }
 
-.modes button.active {
-  background: rgba(255, 255, 255, 0.85);
+.tab-icon { font-size: 16px; }
+.tab-label { letter-spacing: -0.01em; }
+
+.tab.active {
+  background: rgba(255, 255, 255, 0.9);
   color: var(--text-primary);
-  box-shadow: 0 2px 6px rgba(31, 38, 135, 0.1);
+  box-shadow: 0 2px 8px rgba(31, 38, 135, 0.12);
+}
+
+.tab:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.4);
+  color: var(--text-primary);
 }
 
 .progress {
+  margin-left: auto;
+  padding-right: 14px;
   font-size: 14px;
   color: var(--text-tertiary);
 }
 
 .progress .num {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
   color: var(--text-primary);
 }
 
-/* ─── Stage dots ───────────────────────────────────── */
-.stage-dots {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text-tertiary);
-}
-
-.stage-dots .dot {
-  padding: 4px 12px;
+/* ─── Direction toggle ─────────────────────────────── */
+.direction {
+  display: inline-flex;
+  align-self: center;
+  gap: 4px;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.45);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  transition: all 250ms ease;
+  border: 1px solid rgba(255, 255, 255, 0.4);
 }
 
-.stage-dots .dot.active {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-  font-weight: 600;
+.direction button {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 6px 16px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 200ms ease;
 }
 
-.stage-dots .dot.done {
-  background: rgba(52, 199, 89, 0.18);
-  border-color: rgba(52, 199, 89, 0.3);
-  color: #186a2a;
-}
-
-.stage-dots .arrow {
-  opacity: 0.5;
+.direction button.active {
+  background: rgba(0, 122, 255, 0.16);
+  color: #003fbb;
 }
 
 /* ─── State cards ──────────────────────────────────── */
 .state {
-  padding: 64px 32px;
+  padding: 56px 32px;
   text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  margin-top: 24px;
+  margin-top: 12px;
 }
 
 .big-emoji {
-  font-size: 64px;
+  font-size: 56px;
   line-height: 1;
-  margin-bottom: 6px;
 }
 
 .state h2 {
   margin: 4px 0 0;
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 600;
-  letter-spacing: -0.01em;
 }
 
-.error-msg {
-  color: var(--danger);
-}
+.error-msg { color: var(--danger); }
 
 .finished .result-stats {
   display: flex;
@@ -641,18 +644,15 @@ onUnmounted(() => {
 }
 
 .finished .big {
-  font-size: 40px;
+  font-size: 38px;
   font-weight: 700;
-  letter-spacing: -0.02em;
   color: var(--text-primary);
 }
 
-.finished .big.good {
-  color: var(--success);
-}
+.finished .big.good { color: var(--success); }
 
-.state .actions {
-  margin-top: 20px;
+.state-actions {
+  margin-top: 18px;
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
@@ -669,96 +669,59 @@ onUnmounted(() => {
 
 .flash {
   width: 100%;
-  min-height: 340px;
-  padding: 44px 40px;
+  min-height: 360px;
+  padding: 44px 36px;
   border-radius: var(--radius-xl);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
-}
-
-.flash.shake {
-  animation: shake 380ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
-}
-
-@keyframes shake {
-  10%, 90% { transform: translateX(-1px); }
-  20%, 80% { transform: translateX(2px); }
-  30%, 50%, 70% { transform: translateX(-4px); }
-  40%, 60% { transform: translateX(4px); }
+  gap: 18px;
 }
 
 .prompt-hint {
   font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .big-zh {
-  font-size: clamp(32px, 5.5vw, 44px);
+  font-size: clamp(28px, 5vw, 38px);
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text-primary);
   text-align: center;
-  line-height: 1.25;
-  max-width: 600px;
+  line-height: 1.3;
+  max-width: 580px;
 }
 
 .word-display {
   display: flex;
   align-items: center;
   gap: 12px;
-  justify-content: center;
 }
 
 .word-text {
-  font-size: clamp(40px, 8vw, 56px);
+  font-size: clamp(38px, 7vw, 50px);
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--text-primary);
-  line-height: 1.1;
 }
 
-.speaker {
-  appearance: none;
-  border: none;
-  background: rgba(0, 0, 0, 0.04);
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  font-size: 18px;
-  cursor: pointer;
-  transition: background 200ms ease, transform 200ms ease;
+.word-text-small {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
-.speaker:hover {
-  background: rgba(0, 0, 0, 0.08);
-  transform: scale(1.08);
-}
-
-.big-speaker {
-  appearance: none;
-  border: none;
-  background: var(--accent-soft);
-  width: 96px;
-  height: 96px;
-  border-radius: 50%;
-  font-size: 44px;
-  cursor: pointer;
-  transition: transform 200ms ease, background 200ms ease;
-}
-
-.big-speaker:hover {
-  background: rgba(0, 122, 255, 0.2);
-  transform: scale(1.06);
+.word-hint {
+  font-size: 13px;
 }
 
 .phonetic {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 16px;
+  font-size: 15px;
   color: var(--text-tertiary);
 }
 
@@ -771,125 +734,177 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 
-.sentence {
-  font-size: clamp(22px, 4vw, 28px);
-  font-weight: 500;
-  line-height: 1.45;
-  max-width: 580px;
-  text-align: center;
-  letter-spacing: -0.01em;
+.speaker, .speaker-small, .speaker-mini {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  transition: transform 200ms ease, background 200ms ease;
 }
 
-.sentence-zh {
+.speaker {
+  background: rgba(0, 0, 0, 0.04);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  font-size: 18px;
+}
+.speaker:hover { background: rgba(0, 0, 0, 0.08); transform: scale(1.08); }
+
+.speaker-small {
+  background: rgba(0, 0, 0, 0.05);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
   font-size: 14px;
+}
+.speaker-small:hover { background: rgba(0, 0, 0, 0.1); }
+
+.speaker-mini {
+  background: var(--accent-soft);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--accent);
+}
+.speaker-mini:hover { background: rgba(0, 122, 255, 0.2); }
+
+.big-speaker {
+  appearance: none;
+  border: none;
+  background: var(--accent-soft);
+  width: 104px;
+  height: 104px;
+  border-radius: 50%;
+  font-size: 50px;
+  cursor: pointer;
+  transition: transform 200ms ease, background 200ms ease;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.big-speaker:hover {
+  background: rgba(0, 122, 255, 0.2);
+  transform: scale(1.06);
+  animation: none;
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 122, 255, 0.4); }
+  50% { box-shadow: 0 0 0 18px rgba(0, 122, 255, 0); }
+}
+
+.sentence-zh-prompt {
+  font-size: clamp(22px, 4vw, 28px);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  text-align: center;
+  line-height: 1.4;
+  max-width: 600px;
+}
+
+.sentence-en-prompt {
+  font-size: clamp(20px, 3.5vw, 26px);
+  font-weight: 500;
+  font-style: italic;
+  color: var(--text-primary);
+  text-align: center;
+  line-height: 1.45;
+  max-width: 600px;
 }
 
 /* ─── Input ────────────────────────────────────────── */
-.input-row {
-  position: relative;
-  width: min(440px, 90%);
-  margin-top: 14px;
+.text-input-row {
+  width: min(540px, 95%);
 }
 
 .answer-input {
   width: 100%;
   appearance: none;
   border: 2px solid rgba(255, 255, 255, 0.5);
-  background: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.65);
   border-radius: 14px;
-  padding: 14px 48px 14px 18px;
+  padding: 14px 18px;
   font: inherit;
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 500;
   text-align: center;
-  letter-spacing: 0.01em;
   color: var(--text-primary);
   outline: none;
   transition: border-color 200ms ease, box-shadow 200ms ease, background 200ms ease;
 }
 
-.answer-input::placeholder {
-  color: var(--text-tertiary);
-  font-weight: 400;
+.answer-textarea {
+  text-align: left;
+  resize: vertical;
+  min-height: 64px;
+  font-size: 17px;
 }
+
+.answer-input::placeholder { color: var(--text-tertiary); font-weight: 400; }
 
 .answer-input:focus {
   border-color: rgba(0, 122, 255, 0.5);
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.9);
   box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
-.input-row.correct .answer-input {
+.text-input-row.correct .answer-input {
   border-color: var(--success);
   background: rgba(52, 199, 89, 0.1);
   box-shadow: 0 0 0 4px rgba(52, 199, 89, 0.18);
 }
 
-.input-row.wrong .answer-input {
+.text-input-row.wrong .answer-input {
   border-color: var(--danger);
   background: rgba(255, 59, 48, 0.08);
+  animation: shake 380ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
 }
 
-.mark {
-  position: absolute;
-  right: 14px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.mark.ok {
-  background: var(--success);
-  color: white;
-}
-
-.mark.err {
-  background: var(--danger);
-  color: white;
+@keyframes shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
 }
 
 /* ─── Reveal panel ─────────────────────────────────── */
 .answer-panel {
-  margin-top: 20px;
-  padding-top: 18px;
+  margin-top: 8px;
+  padding-top: 16px;
   border-top: 1px solid rgba(0, 0, 0, 0.08);
   width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .row-flex {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
 }
 
 .answer-word {
-  font-size: 30px;
+  font-size: 28px;
   font-weight: 700;
   color: var(--accent);
   letter-spacing: -0.01em;
 }
 
-.answer-zh {
-  font-size: 16px;
-  color: var(--text-secondary);
+.answer-zh-big {
+  font-size: 18px;
+  color: var(--text-primary);
   text-align: center;
+  font-weight: 500;
 }
 
 .sentence-full {
-  font-size: 14px;
-  font-style: italic;
-  margin-top: 4px;
+  font-size: 16px;
+  color: var(--text-primary);
+  text-align: center;
+  line-height: 1.5;
+  max-width: 580px;
 }
 
 /* ─── Actions ──────────────────────────────────────── */
@@ -942,9 +957,7 @@ onUnmounted(() => {
   transition: transform 120ms ease, background 200ms ease, box-shadow 200ms ease;
 }
 
-.btn.rating .label {
-  font-size: 15px;
-}
+.btn.rating .label { font-size: 15px; }
 
 .btn.rating:hover {
   transform: translateY(-2px);
@@ -985,6 +998,8 @@ onUnmounted(() => {
   letter-spacing: 0.01em;
 }
 
+.small { font-size: 13px; }
+
 /* ─── Transitions ─────────────────────────────────── */
 .card-enter-active,
 .card-leave-active {
@@ -1009,34 +1024,12 @@ onUnmounted(() => {
   transform: translateY(10px);
 }
 
-.pop-enter-active {
-  transition: opacity 200ms ease, transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-.pop-enter-from {
-  opacity: 0;
-  transform: translateY(-50%) scale(0.4);
-}
-
 @media (max-width: 640px) {
-  .header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .modes {
-    align-self: center;
-  }
-  .progress {
-    text-align: center;
-  }
-  .flash {
-    padding: 32px 20px;
-  }
-  .answer-input {
-    font-size: 18px;
-  }
-  .btn.rating {
-    min-width: 72px;
-    padding: 10px 14px;
-  }
+  .tabs { flex-wrap: wrap; }
+  .tab-label { font-size: 12px; }
+  .progress { margin-left: auto; }
+  .flash { padding: 32px 18px; }
+  .answer-input { font-size: 16px; }
+  .btn.rating { min-width: 70px; padding: 10px 14px; }
 }
 </style>
