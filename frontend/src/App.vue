@@ -33,9 +33,9 @@ import SideBar from "./components/SideBar.vue";
 }
 
 .main-inner {
-  max-width: 1100px;
+  max-width: 1500px;
   margin: 0 auto;
-  padding: 40px 32px 80px;
+  padding: 32px 36px 80px;
 }
 
 @media (max-width: 860px) {

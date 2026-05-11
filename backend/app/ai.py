@@ -19,16 +19,21 @@ For the given English word or short phrase, return STRICT JSON with these fields
   "pos": "<part of speech: n. / v. / adj. / adv. / phr. — multiple separated by /; if multiple meanings, list main one first>",
   "translation": "<concise Chinese meanings, separate multiple with ；>",
   "examples": [
-    {"en": "<natural English sentence using the word in a real-life conversational context>", "zh": "<accurate Chinese translation>"},
-    {"en": "...", "zh": "..."},
-    {"en": "...", "zh": "..."}
+    {"en": "<natural English sentence using the word in this specific context>", "zh": "<accurate Chinese translation>"},
+    ...
   ]
 }
 
-Rules:
-- Examples must feel like real spoken or written modern English, not textbook.
-- Each example must contain the target word (any inflection form is fine).
-- 3 examples, varied register (casual / professional / written).
+Rules for examples:
+- Generate FIVE examples, each from a CLEARLY DIFFERENT angle so the learner sees the word from multiple sides. Cover variety across:
+    1) everyday casual conversation (e.g. with friends/family)
+    2) professional or workplace context
+    3) written narrative / story / article
+    4) question or hypothetical scenario
+    5) formal speech, news, or academic writing
+- Each example MUST contain the target word (any inflection form is fine).
+- Examples must feel like real spoken or written modern English — not textbook clichés.
+- Translations should be natural Chinese, not literal word-by-word.
 - Output ONLY the JSON object, no markdown fences, no commentary."""
 
 

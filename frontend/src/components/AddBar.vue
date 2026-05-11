@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { api } from "../api";
+import { api, type WordOut } from "../api";
 
-const emit = defineEmits<{ (e: "added"): void }>();
+const emit = defineEmits<{
+  (e: "added", word: WordOut): void;
+}>();
 
 const text = ref("");
 const loading = ref(false);
 const error = ref("");
-const flash = ref(""); // last successfully added word
 
 async function submit() {
   const value = text.value.trim();
@@ -16,10 +17,8 @@ async function submit() {
   error.value = "";
   try {
     const w = await api.addWord(value);
-    flash.value = w.text;
     text.value = "";
-    emit("added");
-    setTimeout(() => (flash.value = ""), 2400);
+    emit("added", w);
   } catch (e: any) {
     error.value = e.message || "添加失败";
   } finally {
@@ -31,22 +30,21 @@ async function submit() {
 <template>
   <div class="add-bar glass-strong">
     <div class="row">
-      <span class="plus">＋</span>
+      <span class="plus">{{ loading ? "⏳" : "+" }}</span>
       <input
         v-model="text"
         class="bare-input"
         type="text"
         :disabled="loading"
-        placeholder="输入要保存的英文单词或短语，回车添加…"
+        placeholder="粘个英文单词或短语，回车 AI 自动给翻译 + 例句…"
+        autocomplete="off"
+        autocapitalize="off"
         @keyup.enter="submit"
       />
       <button class="btn btn-primary" :disabled="loading || !text.trim()" @click="submit">
         {{ loading ? "翻译中…" : "保存" }}
       </button>
     </div>
-    <Transition name="fade">
-      <div v-if="flash" class="hint success">已添加：{{ flash }}</div>
-    </Transition>
     <Transition name="fade">
       <div v-if="error" class="hint error">{{ error }}</div>
     </Transition>
@@ -55,7 +53,7 @@ async function submit() {
 
 <style scoped>
 .add-bar {
-  padding: 12px 12px 12px 20px;
+  padding: 14px 14px 14px 22px;
   border-radius: var(--radius-xl);
 }
 
@@ -66,11 +64,13 @@ async function submit() {
 }
 
 .plus {
-  font-size: 22px;
-  color: var(--text-tertiary);
-  width: 24px;
+  font-size: 26px;
+  color: var(--brand);
+  width: 28px;
   text-align: center;
+  font-weight: 300;
   user-select: none;
+  line-height: 1;
 }
 
 .bare-input {
@@ -82,6 +82,7 @@ async function submit() {
   font-size: 17px;
   color: var(--text-primary);
   padding: 12px 0;
+  min-width: 0;
 }
 
 .bare-input::placeholder {
@@ -97,9 +98,6 @@ async function submit() {
   font-size: 13px;
 }
 
-.hint.success {
-  color: var(--success);
-}
 .hint.error {
   color: var(--danger);
 }
