@@ -24,41 +24,42 @@ onMounted(refresh);
 </script>
 
 <template>
-  <section class="hero">
-    <h1>欢迎回来 👋</h1>
-    <p class="muted">遇到不认识的单词，扔进来 — 翻译、例句和复习计划，自动给你准备好。</p>
-  </section>
+  <div class="dashboard">
+    <section class="hero">
+      <h1>欢迎回来 👋</h1>
+      <p class="muted">遇到不认识的单词，扔进来 — 翻译、例句和复习计划，自动给你准备好。</p>
+    </section>
 
-  <AddBar @added="refresh" />
+    <AddBar @added="refresh" />
 
-  <section class="stats">
-    <div class="stat glass">
-      <div class="num">{{ stats.total }}</div>
-      <div class="label tertiary">单词总数</div>
-    </div>
-    <RouterLink to="/practice" class="stat glass clickable" :class="{ pulse: stats.due_today > 0 }">
-      <div class="num">{{ stats.due_today }}</div>
-      <div class="label tertiary">今日待复习</div>
-    </RouterLink>
-    <div class="stat glass">
-      <div class="num">{{ stats.mastered }}</div>
-      <div class="label tertiary">已掌握</div>
-    </div>
-    <div class="stat glass">
-      <div class="num">{{ stats.added_this_week }}</div>
-      <div class="label tertiary">本周新增</div>
-    </div>
-  </section>
+    <section class="stats">
+      <div class="stat glass">
+        <div class="num">{{ stats.total }}</div>
+        <div class="label tertiary">单词总数</div>
+      </div>
+      <RouterLink to="/practice" class="stat glass clickable" :class="{ pulse: stats.due_today > 0 }">
+        <div class="num">{{ stats.due_today }}</div>
+        <div class="label tertiary">今日待复习</div>
+      </RouterLink>
+      <div class="stat glass">
+        <div class="num">{{ stats.mastered }}</div>
+        <div class="label tertiary">已掌握</div>
+      </div>
+      <div class="stat glass">
+        <div class="num">{{ stats.added_this_week }}</div>
+        <div class="label tertiary">本周新增</div>
+      </div>
+    </section>
 
-  <section class="recent">
-    <div class="section-head">
-      <h2>最近添加</h2>
-      <RouterLink to="/library" class="link">查看全部 →</RouterLink>
-    </div>
+    <section class="recent">
+      <div class="section-head">
+        <h2>最近添加</h2>
+        <RouterLink to="/library" class="link">查看全部 →</RouterLink>
+      </div>
 
     <div v-if="loadError" class="error glass-dim">
       {{ loadError }}
-      <span class="tertiary">— 检查后端是否已启动 / .env 是否配置好 AI_API_KEY</span>
+      <span class="tertiary">— 检查后端是否已启动，或前往设置页配置 AI</span>
     </div>
 
     <div v-else-if="recent.length === 0" class="empty glass-dim">
@@ -69,6 +70,7 @@ onMounted(refresh);
       <WordCard v-for="w in recent" :key="w.id" :word="w" />
     </div>
   </section>
+  </div>
 </template>
 
 <style scoped>
