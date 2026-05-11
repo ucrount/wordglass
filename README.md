@@ -68,8 +68,8 @@ AI_MODEL=deepseek-chat
 - [x] **Step 1** 后端：FastAPI + SQLite + AI 客户端 + REST API
 - [x] **Step 2** 前端骨架 + 毛玻璃设计系统 + Dashboard
 - [x] **Step 3** 一键部署脚本（systemd + nginx + 镜像 fallback）
-- [ ] **Step 4** 单词库页（搜索 / 筛选 / 详情抽屉）
-- [ ] **Step 5** 练习中心（仅单词 / 单词+句子 两种模式 + 翻面 + 自评打分）
+- [x] **Step 4** 练习中心（仅单词 / 单词+句子 两种模式 + 翻面 + 4 档评分 + 阶梯复习）
+- [ ] **Step 5** 单词库页（搜索 / 筛选 / 详情抽屉 / 编辑删除）
 - [ ] 二期：TTS 听写、词根派生、统计图表、PWA
 
 ## 🎨 设计
