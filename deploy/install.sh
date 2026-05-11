@@ -196,15 +196,18 @@ c_blue "==> [4/5] Building (this takes a minute on first run)"
 sudo -u "$APP_USER" bash <<EOF
 set -e
 cd "$APP_DIR/backend"
+echo "  -- pip: setting up venv + installing deps"
 [[ -d .venv ]] || python3 -m venv .venv
-.venv/bin/pip install -q --upgrade pip -i $PIP_INDEX
-.venv/bin/pip install -q -r requirements.txt -i $PIP_INDEX
+.venv/bin/pip install --upgrade pip -i $PIP_INDEX
+.venv/bin/pip install -r requirements.txt -i $PIP_INDEX
 
 cd "$APP_DIR/frontend"
 if [[ ! -d node_modules ]]; then
-  npm ci --registry=$NPM_REGISTRY --silent
+  echo "  -- npm: installing frontend deps (first time, ~1-2 min)"
+  npm ci --registry=$NPM_REGISTRY --no-audit --no-fund --loglevel=warn
 fi
-npm run build --silent
+echo "  -- vite: building production bundle"
+npm run build
 EOF
 
 # ──────────────────────────────────────────────────────────────────────────────
