@@ -13,6 +13,9 @@ import { RouterLink } from "vue-router";
         <RouterLink to="/" exact-active-class="active">概览</RouterLink>
         <RouterLink to="/library" active-class="active">单词库</RouterLink>
         <RouterLink to="/practice" active-class="active">练习</RouterLink>
+        <RouterLink to="/settings" active-class="active" class="icon-link" title="设置">
+          <span class="gear">⚙</span>
+        </RouterLink>
       </nav>
     </div>
   </header>
@@ -79,5 +82,20 @@ import { RouterLink } from "vue-router";
 .links a.active {
   background: rgba(255, 255, 255, 0.7);
   color: var(--text-primary);
+}
+
+.icon-link {
+  padding: 8px 12px !important;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.gear {
+  display: inline-block;
+  transition: transform 400ms ease;
+}
+
+.icon-link:hover .gear {
+  transform: rotate(90deg);
 }
 </style>

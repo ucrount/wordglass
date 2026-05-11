@@ -48,3 +48,17 @@ class ReviewLog(Base):
     reviewed_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     word = relationship("Word", back_populates="reviews")
+
+
+class Setting(Base):
+    """Single-row settings table. id is always 1."""
+
+    __tablename__ = "settings"
+
+    id = Column(Integer, primary_key=True)
+    provider_type = Column(String(20), default="openai")  # openai / anthropic / google
+    base_url = Column(String(255), default="")
+    api_key = Column(Text, default="")
+    model = Column(String(100), default="")
+    auth_token = Column(String(255), default="")  # optional bearer for API access
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

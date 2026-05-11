@@ -1,12 +1,15 @@
-"""OpenAI-compatible client. Works with DeepSeek, OpenAI, Claude proxy, local Ollama, etc."""
+"""High-level AI helper used by routes. Reads settings from DB, dispatches via provider."""
+
+from __future__ import annotations
 
 import json
 import re
 from typing import Any
 
-import httpx
+from sqlalchemy.orm import Session
 
-from .config import settings
+from .providers import ProviderError, build_provider
+from .settings_store import get_settings, is_configured
 
 SYSTEM_PROMPT = """You are a vocabulary helper for a Chinese learner of English.
 For the given English word or short phrase, return STRICT JSON with these fields:
@@ -30,7 +33,6 @@ Rules:
 
 
 def _extract_json(raw: str) -> dict[str, Any]:
-    """Tolerant JSON extraction — strips fences and grabs the first {...} block."""
     s = raw.strip()
     s = re.sub(r"^```(?:json)?\s*", "", s)
     s = re.sub(r"\s*```$", "", s)
@@ -43,52 +45,31 @@ def _extract_json(raw: str) -> dict[str, Any]:
         return json.loads(match.group(0))
 
 
-async def fetch_word_payload(word: str) -> dict[str, Any]:
-    if not settings.AI_API_KEY:
-        raise RuntimeError("AI_API_KEY is not configured. Edit backend/.env first.")
+async def fetch_word_payload(word: str, db: Session) -> dict[str, Any]:
+    row = get_settings(db)
+    if not is_configured(row):
+        raise RuntimeError(
+            "AI is not configured yet. Open Settings and fill in provider / API key / model."
+        )
 
-    url = settings.AI_BASE_URL.rstrip("/") + "/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {settings.AI_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    body = {
-        "model": settings.AI_MODEL,
-        "temperature": 0.4,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": word.strip()},
-        ],
-        "response_format": {"type": "json_object"},
-    }
+    try:
+        provider = build_provider(row.provider_type, row.base_url, row.api_key, row.model)
+        content = await provider.chat(SYSTEM_PROMPT, word.strip(), json_mode=True)
+    except ProviderError as e:
+        raise RuntimeError(str(e)) from e
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        try:
-            resp = await client.post(url, headers=headers, json=body)
-        except httpx.RequestError as e:
-            raise RuntimeError(f"AI request failed: {e}") from e
-
-    if resp.status_code >= 400:
-        # Some providers don't support response_format; retry without it.
-        if "response_format" in resp.text or resp.status_code == 400:
-            body.pop("response_format", None)
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(url, headers=headers, json=body)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"AI {resp.status_code}: {resp.text[:300]}")
-
-    data = resp.json()
-    content = data["choices"][0]["message"]["content"]
-    payload = _extract_json(content)
+    try:
+        payload = _extract_json(content)
+    except Exception as e:
+        raise RuntimeError(f"AI returned non-JSON: {content[:200]}") from e
 
     payload.setdefault("text", word.strip().lower())
     payload.setdefault("phonetic", "")
     payload.setdefault("pos", "")
     payload.setdefault("translation", "")
-    examples = payload.get("examples") or []
-    cleaned_examples = []
-    for ex in examples[:5]:
+    cleaned: list[dict[str, str]] = []
+    for ex in (payload.get("examples") or [])[:5]:
         if isinstance(ex, dict) and ex.get("en"):
-            cleaned_examples.append({"en": str(ex["en"]).strip(), "zh": str(ex.get("zh", "")).strip()})
-    payload["examples"] = cleaned_examples
+            cleaned.append({"en": str(ex["en"]).strip(), "zh": str(ex.get("zh", "")).strip()})
+    payload["examples"] = cleaned
     return payload

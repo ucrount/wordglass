@@ -67,3 +67,35 @@ class AiWordPayload(BaseModel):
     pos: str = ""
     translation: str = ""
     examples: List[dict] = []
+
+
+class SettingsOut(BaseModel):
+    """Settings as returned to the client. The api_key is masked."""
+
+    provider_type: str
+    base_url: str
+    api_key_set: bool  # whether a key is stored (don't return the key itself)
+    api_key_preview: str  # e.g. "sk-...c9f" for confirmation
+    model: str
+    auth_token_set: bool
+    configured: bool  # convenience: True if all required fields are present
+
+
+class SettingsIn(BaseModel):
+    """Incoming settings payload. api_key empty means 'keep existing'."""
+
+    provider_type: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None  # if "", we leave existing; if None, also leave existing
+    model: Optional[str] = None
+    auth_token: Optional[str] = None
+
+
+class ModelListOut(BaseModel):
+    models: List[str]
+
+
+class TestResultOut(BaseModel):
+    ok: bool
+    echo: Optional[str] = None
+    error: Optional[str] = None

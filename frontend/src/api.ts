@@ -38,6 +38,39 @@ export interface Stats {
 
 export type ReviewResult = "again" | "hard" | "good" | "easy";
 
+export type ProviderType = "openai" | "anthropic" | "google";
+
+export interface SettingsOut {
+  provider_type: ProviderType;
+  base_url: string;
+  api_key_set: boolean;
+  api_key_preview: string;
+  model: string;
+  auth_token_set: boolean;
+  configured: boolean;
+}
+
+export interface SettingsIn {
+  provider_type?: ProviderType;
+  base_url?: string;
+  api_key?: string;
+  model?: string;
+  auth_token?: string;
+}
+
+export interface ProviderPreset {
+  id: ProviderType;
+  label: string;
+  description: string;
+  examples: { name: string; base_url: string; model: string }[];
+}
+
+export interface TestResult {
+  ok: boolean;
+  echo?: string;
+  error?: string;
+}
+
 const TOKEN_KEY = "wordglass.token";
 
 export function getToken(): string {
@@ -46,6 +79,14 @@ export function getToken(): string {
 
 export function setToken(t: string) {
   localStorage.setItem(TOKEN_KEY, t);
+}
+
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -63,7 +104,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       detail = await resp.text();
     }
-    throw new Error(detail);
+    // Let global UI react (e.g. show the token dialog on 401)
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("wordglass:api-error", { detail: { status: resp.status, message: detail } })
+      );
+    }
+    throw new ApiError(detail, resp.status);
   }
   if (resp.status === 204) return undefined as T;
   return resp.json() as Promise<T>;
@@ -90,5 +137,18 @@ export const api = {
     request<{ ok: boolean; mastery: number; next_review_at: string }>("/api/review", {
       method: "POST",
       body: JSON.stringify({ word_id, mode, result }),
+    }),
+
+  // Settings
+  getSettings: () => request<SettingsOut>("/api/settings"),
+  listPresets: () => request<{ presets: ProviderPreset[] }>("/api/settings/presets"),
+  saveSettings: (payload: SettingsIn) =>
+    request<SettingsOut>("/api/settings", { method: "PUT", body: JSON.stringify(payload) }),
+  testSettings: (payload: SettingsIn) =>
+    request<TestResult>("/api/settings/test", { method: "POST", body: JSON.stringify(payload) }),
+  listModels: (payload: SettingsIn) =>
+    request<{ models: string[] }>("/api/settings/models", {
+      method: "POST",
+      body: JSON.stringify(payload),
     }),
 };

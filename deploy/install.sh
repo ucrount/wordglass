@@ -129,50 +129,53 @@ c_blue "==> [3/5] Configuration"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo
-  echo "  Need a few things to set up the AI service."
-  echo "  Common presets:  deepseek | openai | ollama   (or 'custom' for manual entry)"
+  echo "  AI 服务可以在网页里配置（推荐），也可以现在就填到 .env 里。"
+  echo "  直接回车跳过 → 装完后打开网页右上角 ⚙ 设置即可。"
   echo
-  read -rp "  AI provider [deepseek]: " PRESET <"$TTY"
-  PRESET=${PRESET:-deepseek}
+  read -rp "  现在配置 AI? (y/N): " CONFIGURE_NOW <"$TTY"
+  CONFIGURE_NOW=${CONFIGURE_NOW:-n}
 
-  case "$PRESET" in
-    deepseek)
-      AI_BASE_URL="https://api.deepseek.com/v1"
-      AI_MODEL="deepseek-chat"
-      ;;
-    openai)
-      AI_BASE_URL="https://api.openai.com/v1"
-      AI_MODEL="gpt-4o-mini"
-      ;;
-    ollama)
-      AI_BASE_URL="http://127.0.0.1:11434/v1"
-      AI_MODEL="qwen2.5:7b"
-      ;;
-    *)
-      read -rp "  AI_BASE_URL: " AI_BASE_URL <"$TTY"
-      read -rp "  AI_MODEL:    " AI_MODEL <"$TTY"
-      ;;
-  esac
+  AI_BASE_URL=""
+  AI_API_KEY=""
+  AI_MODEL=""
 
-  read -rp "  AI_API_KEY (required, paste here): " AI_API_KEY <"$TTY"
-  if [[ -z "${AI_API_KEY// }" ]]; then
-    echo "AI_API_KEY is required." >&2
-    exit 1
+  if [[ "$CONFIGURE_NOW" =~ ^[Yy] ]]; then
+    echo "  Common presets:  deepseek | openai | ollama   (or 'custom' for manual entry)"
+    read -rp "  AI provider [deepseek]: " PRESET <"$TTY"
+    PRESET=${PRESET:-deepseek}
+
+    case "$PRESET" in
+      deepseek)
+        AI_BASE_URL="https://api.deepseek.com/v1"
+        AI_MODEL="deepseek-chat"
+        ;;
+      openai)
+        AI_BASE_URL="https://api.openai.com/v1"
+        AI_MODEL="gpt-4o-mini"
+        ;;
+      ollama)
+        AI_BASE_URL="http://127.0.0.1:11434/v1"
+        AI_MODEL="qwen2.5:7b"
+        ;;
+      *)
+        read -rp "  AI_BASE_URL: " AI_BASE_URL <"$TTY"
+        read -rp "  AI_MODEL:    " AI_MODEL <"$TTY"
+        ;;
+    esac
+    read -rp "  AI_API_KEY: " AI_API_KEY <"$TTY"
   fi
-
-  AUTH_TOKEN=$(openssl rand -hex 24)
 
   umask 077
   cat > "$ENV_FILE" <<EOF
 AI_BASE_URL=$AI_BASE_URL
 AI_API_KEY=$AI_API_KEY
 AI_MODEL=$AI_MODEL
-AUTH_TOKEN=$AUTH_TOKEN
+AUTH_TOKEN=
 DATABASE_URL=sqlite:///./data/wordglass.db
 EOF
   umask 022
   chown "$APP_USER:$APP_USER" "$ENV_FILE"
-  c_green "    ✓ .env written (AUTH_TOKEN auto-generated)"
+  c_green "    ✓ .env written (you can edit AI settings later in the web UI)"
 fi
 
 if [[ ! -f "$NGINX_FILE" ]]; then
@@ -226,7 +229,6 @@ systemctl reload nginx
 # Done
 # ──────────────────────────────────────────────────────────────────────────────
 SERVER_NAME=$(grep -E '^\s*server_name' "$NGINX_FILE" | head -1 | awk '{print $2}' | tr -d ';')
-TOKEN=$(grep '^AUTH_TOKEN=' "$ENV_FILE" | cut -d= -f2-)
 
 echo
 c_green "✅ All done."
@@ -235,9 +237,7 @@ echo "   🌐 Open:      http://$SERVER_NAME"
 echo "   📊 Service:   systemctl status $SERVICE"
 echo "   📜 Logs:      journalctl -u $SERVICE -f"
 echo
-if [[ -n "$TOKEN" ]]; then
-  c_yellow "   🔐 AUTH_TOKEN (paste in browser console once after first load):"
-  echo "      localStorage.setItem('wordglass.token', '$TOKEN')"
-  echo
-fi
+c_yellow "   ⚙  First time? Open the URL above, then go to the gear icon"
+c_yellow "      (top-right) to configure AI provider / model / API key."
+echo
 echo "   Update later: cd $APP_DIR && sudo bash deploy/install.sh"

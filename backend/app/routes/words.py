@@ -19,7 +19,7 @@ async def add_word(payload: WordCreate, db: Session = Depends(get_db)):
         return existing
 
     try:
-        ai_payload = await fetch_word_payload(text)
+        ai_payload = await fetch_word_payload(text, db)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
