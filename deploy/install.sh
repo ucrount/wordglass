@@ -181,10 +181,12 @@ if [[ ! -f "$NGINX_FILE" ]]; then
   read -rp "  Domain or IP for nginx [$PUBLIC_IP]: " SERVER_NAME <"$TTY"
   SERVER_NAME=${SERVER_NAME:-$PUBLIC_IP}
   sed "s|SERVER_NAME|$SERVER_NAME|g" "$APP_DIR/deploy/nginx.conf" > "$NGINX_FILE"
-  ln -sf "$NGINX_FILE" /etc/nginx/sites-enabled/wordglass
-  rm -f /etc/nginx/sites-enabled/default
-  c_green "    ✓ nginx site configured for $SERVER_NAME"
+  c_green "    ✓ nginx site file created for $SERVER_NAME"
 fi
+
+# Always (re)ensure the site is enabled and default is gone — idempotent.
+ln -sf "$NGINX_FILE" /etc/nginx/sites-enabled/wordglass
+rm -f /etc/nginx/sites-enabled/default
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Step 4 / 5 — Build backend + frontend (using fast mirrors)
