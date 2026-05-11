@@ -1,15 +1,25 @@
-/* WordGlass — Liquid Glass design system */
+/* WordGlass — Liquid Glass design system, light + dark themes */
 
 :root {
+  /* Brand */
+  --brand: #8b5cf6;             /* purple highlight on hero etc. */
+  --brand-soft: rgba(139, 92, 246, 0.14);
+
+  /* Text */
   --text-primary: #1d1d1f;
   --text-secondary: #515154;
   --text-tertiary: #86868b;
+
+  /* Accent (interactive blue) */
   --accent: #007aff;
   --accent-soft: rgba(0, 122, 255, 0.12);
+
+  /* States */
   --success: #34c759;
   --danger: #ff3b30;
   --warn: #ff9500;
 
+  /* Glass surfaces */
   --glass-bg: rgba(255, 255, 255, 0.55);
   --glass-bg-strong: rgba(255, 255, 255, 0.72);
   --glass-bg-dim: rgba(255, 255, 255, 0.35);
@@ -17,19 +27,55 @@
   --glass-shadow: 0 8px 32px rgba(31, 38, 135, 0.12);
   --glass-shadow-lg: 0 20px 60px rgba(31, 38, 135, 0.18);
 
+  --hairline: rgba(0, 0, 0, 0.08);
+  --hairline-strong: rgba(0, 0, 0, 0.14);
+
+  /* Body backdrop (the colorful blobs behind the glass) */
+  --bg-base: linear-gradient(135deg, #fdfbff 0%, #f3eefb 100%);
+  --bg-blob-1: rgba(168, 197, 255, 0.85);
+  --bg-blob-2: rgba(255, 179, 199, 0.70);
+  --bg-blob-3: rgba(209, 179, 255, 0.80);
+  --bg-blob-1-stronger: rgba(120, 160, 255, 0.45);
+  --bg-blob-2-stronger: rgba(255, 140, 180, 0.40);
+  --bg-blob-3-stronger: rgba(180, 140, 255, 0.40);
+
+  /* Radii */
   --radius-sm: 12px;
   --radius-md: 18px;
   --radius-lg: 24px;
   --radius-xl: 32px;
 }
 
-* {
-  box-sizing: border-box;
+[data-theme="dark"] {
+  --text-primary: #f5f5f7;
+  --text-secondary: #b8b8c2;
+  --text-tertiary: #8a8a93;
+
+  --accent: #5e9bff;
+  --accent-soft: rgba(94, 155, 255, 0.18);
+
+  --glass-bg: rgba(28, 28, 36, 0.55);
+  --glass-bg-strong: rgba(34, 34, 44, 0.72);
+  --glass-bg-dim: rgba(28, 28, 36, 0.35);
+  --glass-border: rgba(255, 255, 255, 0.10);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --glass-shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.55);
+
+  --hairline: rgba(255, 255, 255, 0.10);
+  --hairline-strong: rgba(255, 255, 255, 0.18);
+
+  --bg-base: linear-gradient(135deg, #0a0a1a 0%, #110820 100%);
+  --bg-blob-1: rgba(80, 70, 200, 0.45);
+  --bg-blob-2: rgba(200, 90, 160, 0.35);
+  --bg-blob-3: rgba(120, 80, 220, 0.45);
+  --bg-blob-1-stronger: rgba(80, 70, 200, 0.55);
+  --bg-blob-2-stronger: rgba(200, 90, 160, 0.40);
+  --bg-blob-3-stronger: rgba(120, 80, 220, 0.55);
 }
 
-html,
-body,
-#app {
+* { box-sizing: border-box; }
+
+html, body, #app {
   margin: 0;
   padding: 0;
   min-height: 100vh;
@@ -44,16 +90,15 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   background:
-    radial-gradient(circle at 8% 12%, rgba(168, 197, 255, 0.85), transparent 45%),
-    radial-gradient(circle at 92% 8%, rgba(255, 179, 199, 0.7), transparent 45%),
-    radial-gradient(circle at 50% 100%, rgba(209, 179, 255, 0.8), transparent 50%),
-    linear-gradient(135deg, #fdfbff 0%, #f3eefb 100%);
+    radial-gradient(circle at 8% 12%, var(--bg-blob-1), transparent 45%),
+    radial-gradient(circle at 92% 8%, var(--bg-blob-2), transparent 45%),
+    radial-gradient(circle at 50% 100%, var(--bg-blob-3), transparent 50%),
+    var(--bg-base);
   background-attachment: fixed;
   min-height: 100vh;
+  transition: color 300ms ease;
 }
 
-/* The "blob" decoration that lives behind the glass — gives content something
-   colorful to be blurred when scrolled */
 body::before {
   content: "";
   position: fixed;
@@ -61,19 +106,15 @@ body::before {
   pointer-events: none;
   z-index: -1;
   background:
-    radial-gradient(40vmin 40vmin at 20% 30%, rgba(120, 160, 255, 0.45), transparent 60%),
-    radial-gradient(35vmin 35vmin at 85% 70%, rgba(255, 140, 180, 0.4), transparent 60%),
-    radial-gradient(30vmin 30vmin at 60% 20%, rgba(180, 140, 255, 0.4), transparent 60%);
+    radial-gradient(40vmin 40vmin at 20% 30%, var(--bg-blob-1-stronger), transparent 60%),
+    radial-gradient(35vmin 35vmin at 85% 70%, var(--bg-blob-2-stronger), transparent 60%),
+    radial-gradient(30vmin 30vmin at 60% 20%, var(--bg-blob-3-stronger), transparent 60%);
   animation: drift 30s ease-in-out infinite alternate;
 }
 
 @keyframes drift {
-  0% {
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-  100% {
-    transform: translate3d(2vmin, -3vmin, 0) scale(1.05);
-  }
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  100% { transform: translate3d(2vmin, -3vmin, 0) scale(1.05); }
 }
 
 /* === Glass primitive === */
@@ -99,7 +140,7 @@ body::before {
   background: var(--glass-bg-dim);
   backdrop-filter: blur(20px) saturate(160%);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
 }
 
@@ -120,13 +161,12 @@ body::before {
 }
 
 .btn:hover {
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--glass-bg-strong);
+  filter: brightness(1.08);
   box-shadow: 0 4px 16px rgba(31, 38, 135, 0.12);
 }
 
-.btn:active {
-  transform: scale(0.97);
-}
+.btn:active { transform: scale(0.97); }
 
 .btn-primary {
   background: var(--accent);
@@ -135,12 +175,13 @@ body::before {
 }
 
 .btn-primary:hover {
-  background: #2589ff;
+  background: var(--accent);
+  filter: brightness(1.10);
 }
 
 .btn-ghost {
   background: transparent;
-  border-color: rgba(255, 255, 255, 0.3);
+  border-color: var(--glass-border);
 }
 
 /* === Inputs === */
@@ -161,14 +202,12 @@ body::before {
 }
 
 .input:focus {
-  border-color: rgba(0, 122, 255, 0.5);
-  background: rgba(255, 255, 255, 0.75);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: var(--glass-bg-strong);
   box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
-.input::placeholder {
-  color: var(--text-tertiary);
-}
+.input::placeholder { color: var(--text-tertiary); }
 
 /* === Layout helpers === */
 .container {
@@ -177,13 +216,8 @@ body::before {
   padding: 0 24px;
 }
 
-.muted {
-  color: var(--text-secondary);
-}
-
-.tertiary {
-  color: var(--text-tertiary);
-}
+.muted { color: var(--text-secondary); }
+.tertiary { color: var(--text-tertiary); }
 
 /* === Animations === */
 .fade-enter-active,
@@ -196,18 +230,35 @@ body::before {
   transform: translateY(8px);
 }
 
-/* Scrollbar polish (WebKit) */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+/* Stagger reveal — apply to elements with --stagger custom property (0,1,2,...) */
+.stagger {
+  animation: stagger-reveal 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--stagger, 0) * 0.12s);
 }
+
+@keyframes stagger-reveal {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before { animation: none; }
+  .stagger { animation: none; opacity: 1; transform: none; }
+}
+
+/* Scrollbar polish */
+::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--hairline-strong);
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 0, 0, 0.25);
+  background-clip: padding-box;
+}
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.30);
   background-clip: padding-box;
 }
