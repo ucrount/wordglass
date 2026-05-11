@@ -34,7 +34,7 @@ async function refreshHeatmap() {
 async function refreshRecent() {
   recentError.value = "";
   try {
-    recent.value = await api.listWords({ limit: 20 });
+    recent.value = await api.listWords({ limit: 12 });
   } catch (e: any) {
     recentError.value = e.message || "加载失败";
   }
@@ -64,28 +64,23 @@ onMounted(refreshAll);
 
 <template>
   <div class="dashboard">
-    <!-- Page header (compact) -->
+    <!-- Page header -->
     <header class="page-head stagger" style="--stagger: 0">
       <h1>主页</h1>
-      <p class="muted small">粘个单词，AI 立刻给翻译和 3 个不同语境的例句。</p>
+      <p class="muted">粘个单词，AI 立刻给翻译和 3 个不同语境的例句。</p>
     </header>
 
-    <!-- Two-column body, flex-fills remaining viewport height -->
+    <!-- Two-column body -->
     <div class="body-grid">
-      <!-- ─── LEFT MAIN COLUMN ───────────────────────────── -->
+      <!-- ─── LEFT MAIN COLUMN ─────────────────────────── -->
       <div class="col-main">
         <section class="stagger" style="--stagger: 1">
           <AddBar @added="onAdded" />
         </section>
 
-        <!-- Either preview OR recent — same slot, internally scrollable -->
-        <Transition name="fade" mode="out-in">
-          <section
-            v-if="lastAdded"
-            key="preview"
-            class="preview glass-strong stagger"
-            style="--stagger: 2"
-          >
+        <!-- Just-added preview — header stays still, examples scroll inside -->
+        <Transition name="reveal-pop">
+          <section v-if="lastAdded" class="preview glass-strong">
             <div class="preview-head">
               <div class="word-row">
                 <span class="word-text">{{ lastAdded.text }}</span>
@@ -102,16 +97,22 @@ onMounted(refreshAll);
             </div>
             <div class="translation">{{ lastAdded.translation }}</div>
 
-            <div v-if="lastAdded.examples.length > 0" class="examples">
-              <div
-                v-for="(ex, i) in lastAdded.examples"
-                :key="ex.id"
-                class="example"
-              >
-                <div class="example-num">{{ i + 1 }}</div>
-                <div class="example-body">
-                  <div class="example-en">{{ ex.en }}</div>
-                  <div v-if="ex.zh" class="example-zh tertiary">{{ ex.zh }}</div>
+            <div v-if="lastAdded.examples.length > 0" class="examples-wrap">
+              <div class="examples-head tertiary">
+                <span class="dot-purple" />
+                {{ lastAdded.examples.length }} 个不同语境的例句
+              </div>
+              <div class="examples">
+                <div
+                  v-for="(ex, i) in lastAdded.examples"
+                  :key="ex.id"
+                  class="example"
+                >
+                  <div class="example-num">{{ i + 1 }}</div>
+                  <div class="example-body">
+                    <div class="example-en">{{ ex.en }}</div>
+                    <div v-if="ex.zh" class="example-zh tertiary">{{ ex.zh }}</div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -121,41 +122,36 @@ onMounted(refreshAll);
               <button class="btn btn-ghost" @click="clearPreview">再加一个</button>
             </div>
           </section>
-
-          <section
-            v-else
-            key="recent"
-            class="recent stagger"
-            style="--stagger: 2"
-          >
-            <div class="section-head">
-              <h2>最近添加</h2>
-              <RouterLink to="/library" class="link">查看全部 →</RouterLink>
-            </div>
-
-            <div v-if="recentError" class="hint-card error glass-dim">
-              {{ recentError }}
-              <div class="tertiary small">检查后端是否启动 / 设置页 AI 是否配置</div>
-            </div>
-
-            <div v-else-if="initialLoad" class="hint-card glass-dim">
-              <span class="muted">加载中…</span>
-            </div>
-
-            <div v-else-if="recent.length === 0" class="hint-card glass-dim">
-              <span class="muted">还没有保存的单词。</span>
-              <span class="tertiary small">在上方搜索框粘一个英文单词试试。</span>
-            </div>
-
-            <!-- Horizontal scrolling carousel — bounded vertical height -->
-            <div v-else class="recent-row">
-              <WordCard v-for="w in recent" :key="w.id" :word="w" />
-            </div>
-          </section>
         </Transition>
+
+        <!-- Recent words (natural grid that wraps) -->
+        <section class="recent stagger" style="--stagger: 2">
+          <div class="section-head">
+            <h2>最近添加</h2>
+            <RouterLink to="/library" class="link">查看全部 →</RouterLink>
+          </div>
+
+          <div v-if="recentError" class="hint-card error glass-dim">
+            {{ recentError }}
+            <div class="tertiary small">检查后端是否启动 / 设置页 AI 是否配置</div>
+          </div>
+
+          <div v-else-if="initialLoad" class="hint-card glass-dim">
+            <span class="muted">加载中…</span>
+          </div>
+
+          <div v-else-if="recent.length === 0" class="hint-card glass-dim">
+            <span class="muted">还没有保存的单词。</span>
+            <span class="tertiary small">在上方搜索框粘一个英文单词试试。</span>
+          </div>
+
+          <div v-else class="grid">
+            <WordCard v-for="w in recent" :key="w.id" :word="w" />
+          </div>
+        </section>
       </div>
 
-      <!-- ─── RIGHT SIDEBAR ───────────────────────────────── -->
+      <!-- ─── RIGHT SIDEBAR ─────────────────────────────── -->
       <aside class="col-side">
         <section class="widget glass stagger" style="--stagger: 3">
           <div class="widget-head">
@@ -173,7 +169,7 @@ onMounted(refreshAll);
               </span>
               <span class="due-label">
                 <div class="muted small">今日待复习</div>
-                <div class="tertiary" style="font-size: 11px">
+                <div class="tertiary tiny">
                   {{ stats.due_today === 0 ? "今天没有需要复习的词" : "趁热打铁巩固一下" }}
                 </div>
               </span>
@@ -227,18 +223,16 @@ onMounted(refreshAll);
 .dashboard {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  height: 100%;
-  min-height: 0;
+  gap: 20px;
 }
 
 /* Stagger */
 .stagger {
   animation: stagger-fade 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
-  animation-delay: calc(var(--stagger, 0) * 0.07s);
+  animation-delay: calc(var(--stagger, 0) * 0.08s);
 }
 @keyframes stagger-fade {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -246,23 +240,22 @@ onMounted(refreshAll);
 }
 
 /* Page head */
-.page-head { flex-shrink: 0; }
 .page-head h1 {
-  font-size: 22px;
+  font-size: 26px;
   font-weight: 700;
   letter-spacing: -0.02em;
-  margin: 0;
+  margin: 0 0 4px;
 }
-.page-head p { margin: 2px 0 0; font-size: 13px; }
+.page-head p { margin: 0; font-size: 14px; }
 .small { font-size: 12px; }
+.tiny { font-size: 11px; }
 
-/* Body grid — fills remaining viewport */
+/* Body grid */
 .body-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.65fr) minmax(320px, 1fr);
-  gap: 16px;
-  flex: 1;
-  min-height: 0;
+  gap: 20px;
+  align-items: start;
 }
 
 @media (max-width: 1080px) {
@@ -273,28 +266,24 @@ onMounted(refreshAll);
 .col-side {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  min-height: 0;
+  gap: 16px;
   min-width: 0;
 }
 
-/* ─── Preview ──────────────────────────────────────── */
+/* ─── Preview card ─────────────────────────────────── */
 .preview {
-  padding: 18px 22px;
+  padding: 22px 24px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  border-left: 3px solid var(--brand);
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
+  gap: 12px;
+  border-left: 4px solid var(--brand);
 }
 
 .preview-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
 }
 
 .word-row {
@@ -305,7 +294,7 @@ onMounted(refreshAll);
 }
 
 .word-text {
-  font-size: clamp(24px, 2.6vw, 30px);
+  font-size: clamp(26px, 3vw, 32px);
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--text-primary);
@@ -316,8 +305,8 @@ onMounted(refreshAll);
   appearance: none;
   border: none;
   background: rgba(0, 0, 0, 0.04);
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   font-size: 14px;
   cursor: pointer;
@@ -329,7 +318,7 @@ onMounted(refreshAll);
 
 .phonetic {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-tertiary);
 }
 
@@ -350,7 +339,7 @@ onMounted(refreshAll);
   line-height: 1;
   color: var(--text-tertiary);
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 4px 10px;
   border-radius: 8px;
   transition: background 200ms ease;
 }
@@ -363,12 +352,35 @@ onMounted(refreshAll);
   color: var(--brand);
 }
 
+/* ─── Examples — fixed-height area with internal scroll ─── */
+.examples-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.examples-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dot-purple {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand);
+}
+
 .examples {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex: 1;
-  min-height: 0;
+  max-height: 240px;       /* keeps the card height stable */
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -392,8 +404,8 @@ onMounted(refreshAll);
 
 .example-num {
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: var(--brand-soft);
   color: var(--brand);
@@ -411,92 +423,79 @@ onMounted(refreshAll);
   line-height: 1.5;
 }
 .example-zh {
-  margin-top: 2px;
-  font-size: 12px;
+  margin-top: 3px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
 .preview-actions {
   display: flex;
   gap: 8px;
-  flex-shrink: 0;
+  margin-top: 4px;
 }
-
 .preview-actions .btn {
   text-decoration: none;
   padding: 8px 18px;
   font-size: 14px;
 }
 
-/* ─── Recent words (horizontal scroll) ─────────────── */
-.recent {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  flex: 1;
-  min-height: 0;
+.reveal-pop-enter-active,
+.reveal-pop-leave-active {
+  transition: opacity 280ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
 }
+.reveal-pop-enter-from {
+  opacity: 0;
+  transform: translateY(-10px) scale(0.98);
+}
+.reveal-pop-leave-to {
+  opacity: 0;
+  transform: scale(0.98);
+}
+
+/* ─── Recent words (natural grid, wraps) ──────────── */
+.recent { display: flex; flex-direction: column; gap: 12px; }
 
 .section-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  flex-shrink: 0;
 }
+
 .section-head h2 {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   letter-spacing: -0.01em;
   margin: 0;
 }
+
 .link {
   text-decoration: none;
   color: var(--brand);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
-.recent-row {
-  display: flex;
-  flex-direction: row;
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 12px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 10px;
-  flex: 1;
-  align-items: stretch;
-  min-height: 0;
 }
-
-.recent-row > * {
-  flex: 0 0 220px;
-  height: 100%;
-}
-
-.recent-row::-webkit-scrollbar { height: 6px; }
-.recent-row::-webkit-scrollbar-track { background: transparent; }
-.recent-row::-webkit-scrollbar-thumb {
-  background: var(--hairline-strong);
-  border-radius: 999px;
-}
-.recent-row::-webkit-scrollbar-thumb:hover { background: var(--brand); opacity: 0.6; }
 
 .hint-card {
-  padding: 24px;
+  padding: 28px;
   text-align: center;
   color: var(--text-secondary);
   display: flex;
   flex-direction: column;
   gap: 4px;
-  flex: 1;
-  align-items: center;
-  justify-content: center;
 }
 .hint-card.error { color: var(--danger); }
 
 /* ─── Right sidebar widgets ────────────────────────── */
 .widget {
-  padding: 16px 18px;
+  padding: 18px 20px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -510,13 +509,12 @@ onMounted(refreshAll);
 
 .widget-head h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.01em;
 }
 
-/* Due widget — compact horizontal */
-.due-widget { padding: 14px 18px; }
+.due-widget { padding: 16px 20px; }
 
 .due-row {
   display: flex;
@@ -532,7 +530,7 @@ onMounted(refreshAll);
 }
 
 .num-gradient {
-  font-size: 38px;
+  font-size: 42px;
   font-weight: 800;
   letter-spacing: -0.025em;
   line-height: 1;
@@ -550,7 +548,6 @@ onMounted(refreshAll);
 }
 
 .due-label { display: flex; flex-direction: column; }
-
 .due-row .btn {
   padding: 8px 18px;
   font-size: 13px;
@@ -558,7 +555,7 @@ onMounted(refreshAll);
   text-decoration: none;
 }
 
-/* Stats — single row of 4, compact */
+/* Stats — single row of 4 */
 .stat-row {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -575,7 +572,7 @@ onMounted(refreshAll);
   min-width: 0;
 }
 
-.stat-icon { font-size: 18px; line-height: 1; flex-shrink: 0; }
+.stat-icon { font-size: 19px; line-height: 1; flex-shrink: 0; }
 .stat-info { display: flex; flex-direction: column; min-width: 0; }
 .stat-num {
   font-size: 19px;
@@ -584,10 +581,4 @@ onMounted(refreshAll);
   line-height: 1.1;
 }
 .stat-label { font-size: 11px; }
-
-/* ─── Responsive: when stacked (narrow), allow page scroll ─── */
-@media (max-width: 1080px) {
-  .dashboard { height: auto; }
-  .recent-row { overflow-x: auto; }
-}
 </style>
