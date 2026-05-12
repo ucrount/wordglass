@@ -14,6 +14,7 @@ class Word(Base):
     phonetic = Column(String(120), default="")
     pos = Column(String(40), default="")
     translation = Column(Text, default="")
+    category = Column(String(50), default="", index=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     mastery = Column(Integer, default=0, index=True)

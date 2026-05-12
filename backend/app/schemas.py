@@ -23,6 +23,7 @@ class WordOut(BaseModel):
     phonetic: str
     pos: str
     translation: str
+    category: str
     mastery: int
     review_count: int
     correct_count: int
@@ -39,6 +40,7 @@ class WordBrief(BaseModel):
     text: str
     phonetic: str
     translation: str
+    category: str
     mastery: int
     created_at: datetime
 

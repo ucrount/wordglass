@@ -12,6 +12,7 @@ export interface WordOut {
   phonetic: string;
   pos: string;
   translation: string;
+  category: string;
   mastery: number;
   review_count: number;
   correct_count: number;
@@ -25,8 +26,14 @@ export interface WordBrief {
   text: string;
   phonetic: string;
   translation: string;
+  category: string;
   mastery: number;
   created_at: string;
+}
+
+export interface CategoriesOut {
+  counts: Record<string, number>;
+  order: string[];
 }
 
 export interface Stats {
@@ -128,15 +135,18 @@ export const api = {
 
   addWord: (text: string) =>
     request<WordOut>("/api/words", { method: "POST", body: JSON.stringify({ text }) }),
-  listWords: (params: { q?: string; mastery?: number; limit?: number; offset?: number } = {}) => {
+  listWords: (params: { q?: string; category?: string; mastery?: number; limit?: number; offset?: number } = {}) => {
     const q = new URLSearchParams();
-    Object.entries(params).forEach(([k, v]) => v !== undefined && q.set(k, String(v)));
+    Object.entries(params).forEach(([k, v]) => v !== undefined && v !== null && v !== "" && q.set(k, String(v)));
     const suffix = q.toString() ? `?${q}` : "";
     return request<WordBrief[]>(`/api/words${suffix}`);
   },
   getWord: (id: number) => request<WordOut>(`/api/words/${id}`),
   deleteWord: (id: number) =>
     request<{ ok: boolean }>(`/api/words/${id}`, { method: "DELETE" }),
+  listCategories: () => request<CategoriesOut>("/api/words/categories"),
+  recategorize: () =>
+    request<{ updated: number; total: number }>("/api/words/recategorize", { method: "POST" }),
 
   dueWords: (limit = 50) => request<WordOut[]>(`/api/review/due?limit=${limit}`),
   submitReview: (word_id: number, mode: string, result: ReviewResult) =>
