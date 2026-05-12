@@ -19,7 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/ucrount/wordglass/main/deploy/insta
 打开脚本结尾给你的 URL（http://你的IP），主页直接可用：
 
 - ✅ **不需要配置 AI**：内置 ECDICT 词典，加单词就有翻译/音标/词性
-- ✅ **不需要配置 AI**：主页下方"阅读 & 翻译"面板里，点任意单词都能立刻查词
+- ✅ **不需要配置 AI**：「📖 阅读翻译」页里，点任意单词都能立刻查词
 - 💡 **可选**：右上角 ⚙ 填 AI 配置，可以处理 ECDICT 没收录的生僻词、自动分类、补例句、**翻译整段文本**
 
 ---

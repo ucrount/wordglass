@@ -8,6 +8,7 @@ const mobileOpen = ref(false);
 
 const NAV = [
   { to: "/", label: "主页", icon: "🏠", exact: true },
+  { to: "/reader", label: "阅读翻译", icon: "📖" },
   { to: "/library", label: "单词库", icon: "📚" },
   { to: "/practice", label: "练习", icon: "🎯" },
 ];
