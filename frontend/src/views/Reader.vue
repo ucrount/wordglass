@@ -33,6 +33,44 @@ const loading = ref(false);
 const error = ref("");
 const addedCount = ref(0);
 
+// Auto-translate debounce. Fires 1200ms after the last keystroke or right
+// away on paste — so the user never thinks about a "translate" button.
+const DEBOUNCE_MS = 1200;
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let lastTranslatedText = stored.en; // skip re-translating identical text
+
+function cancelDebounce() {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+  }
+}
+
+function scheduleTranslate(immediate = false) {
+  cancelDebounce();
+  const text = english.value.trim();
+  if (!text) {
+    chinese.value = "";
+    mode.value = "edit";
+    lastTranslatedText = "";
+    return;
+  }
+  if (text === lastTranslatedText.trim()) return;
+  if (immediate) {
+    doTranslate();
+  } else {
+    debounceTimer = setTimeout(doTranslate, DEBOUNCE_MS);
+  }
+}
+
+watch(english, () => scheduleTranslate(false));
+
+function onPaste() {
+  // Browser writes pasted text into the textarea before the watch fires,
+  // so trigger immediate translation on the next tick.
+  setTimeout(() => scheduleTranslate(true), 0);
+}
+
 interface Popup {
   word: string;
   loading: boolean;
@@ -70,22 +108,30 @@ const wordCount = computed(
   () => (english.value.match(/[A-Za-z][A-Za-z'-]*/g) || []).length
 );
 const charCount = computed(() => english.value.length);
-const canTranslate = computed(() => english.value.trim().length > 0 && !loading.value);
 
 // ─── Actions ───────────────────────────────────────────────────────────────
 async function doTranslate() {
+  cancelDebounce();
   const text = english.value.trim();
   if (!text || loading.value) return;
   loading.value = true;
   error.value = "";
   try {
     const res = await api.translateText(text);
+    // If the user kept typing during the request, the snapshot is stale —
+    // schedule another round but still surface this result so they see progress.
     chinese.value = res.translation;
-    mode.value = "read";
+    lastTranslatedText = text;
+    if (english.value.trim() === text) {
+      mode.value = "read";
+    }
   } catch (e: any) {
     error.value = e.message || "翻译失败";
   } finally {
     loading.value = false;
+    if (english.value.trim() && english.value.trim() !== lastTranslatedText.trim()) {
+      scheduleTranslate(false);
+    }
   }
 }
 
@@ -94,20 +140,10 @@ function backToEdit() {
   popup.value = null;
 }
 
-function clearAll() {
-  if (!english.value && !chinese.value) return;
-  if (!confirm("清空原文和译文？")) return;
-  english.value = "";
-  chinese.value = "";
-  error.value = "";
-  mode.value = "edit";
-  popup.value = null;
-  addedCount.value = 0;
-}
-
 function pasteExample() {
   english.value = `The morning light slipped through the cracked blinds, painting thin stripes across the wooden floor. Lena sat by the window, cradling a cup of tea, watching the city wake up. Somewhere in the distance, a tram bell rang. She thought about all the things she had meant to do this week, and how a quiet Saturday could rearrange her priorities entirely.`;
   mode.value = "edit";
+  scheduleTranslate(true);
 }
 
 // ─── Popup ─────────────────────────────────────────────────────────────────
@@ -119,11 +155,9 @@ async function onWordClick(event: MouseEvent, word: string) {
   const POPUP_WIDTH = 300;
   const POPUP_HEIGHT_ESTIMATE = 180;
 
-  // Position the popup near the clicked word; flip above if it would overflow.
   const spaceBelow = window.innerHeight - rect.bottom;
   const flipAbove = spaceBelow < POPUP_HEIGHT_ESTIMATE + 20;
   let x = rect.left - containerRect.left;
-  // Don't let the popup overflow the right edge of the container
   const maxX = containerRect.width - POPUP_WIDTH - 8;
   if (x > maxX) x = Math.max(8, maxX);
   const y = flipAbove
@@ -196,6 +230,7 @@ onMounted(() => {
   document.addEventListener("click", closePopup);
 });
 onBeforeUnmount(() => {
+  cancelDebounce();
   document.removeEventListener("keydown", onKey);
   document.removeEventListener("click", closePopup);
 });
@@ -208,8 +243,9 @@ onBeforeUnmount(() => {
       <div class="title-block">
         <h1><span class="emoji">📖</span> 阅读 &amp; 翻译</h1>
         <p class="muted small">
-          粘一段英文 → AI 翻译成中文 → 点任意单词加入单词库
-          <span v-if="addedCount > 0" class="added-chip">
+          粘段英文，自动翻译；点任意单词加入单词库
+          <span v-if="loading" class="status-chip loading">⏳ 翻译中…</span>
+          <span v-else-if="addedCount > 0" class="status-chip saved">
             本次已加入 {{ addedCount }} 个 ✓
           </span>
         </p>
@@ -220,18 +256,6 @@ onBeforeUnmount(() => {
           class="btn btn-ghost"
           @click="backToEdit"
         >✎ 编辑原文</button>
-        <button
-          class="btn btn-ghost"
-          :disabled="!english && !chinese"
-          @click="clearAll"
-        >清空</button>
-        <button
-          class="btn btn-primary"
-          :disabled="!canTranslate"
-          @click="doTranslate"
-        >
-          {{ loading ? "翻译中…" : "🤖 翻译整段" }}
-        </button>
       </div>
     </header>
 
@@ -254,6 +278,7 @@ onBeforeUnmount(() => {
           class="textarea"
           placeholder="把英文粘进来——文章、新闻、邮件、字幕都行（最长 5000 字符）…"
           spellcheck="false"
+          @paste="onPaste"
         />
 
         <div v-else ref="readContainer" class="reading" @click.stop>
@@ -315,7 +340,7 @@ onBeforeUnmount(() => {
           <span v-if="chinese" class="pane-meta tertiary">{{ chinese.length }} 字</span>
         </div>
 
-        <div v-if="loading" class="skeleton">
+        <div v-if="loading && !chinese" class="skeleton">
           <div class="skeleton-line" style="width: 92%"></div>
           <div class="skeleton-line" style="width: 86%"></div>
           <div class="skeleton-line" style="width: 78%"></div>
@@ -323,16 +348,15 @@ onBeforeUnmount(() => {
           <div class="skeleton-line" style="width: 64%"></div>
         </div>
 
-        <div v-else-if="chinese" class="chinese">{{ chinese }}</div>
+        <div v-else-if="chinese" class="chinese" :class="{ stale: loading }">{{ chinese }}</div>
 
         <div v-else class="empty">
           <div class="empty-emoji">🌐</div>
-          <p class="muted">这里会显示中文译文</p>
+          <p class="muted">粘段英文，几秒后这里会出现中文</p>
           <p v-if="!english" class="tertiary small">
-            先在左边粘段英文，或者
+            或者
             <button class="link-btn" @click="pasteExample">塞个示例进来</button>
           </p>
-          <p v-else class="tertiary small">点 🤖 翻译整段 开始</p>
         </div>
       </section>
     </div>
@@ -377,13 +401,23 @@ onBeforeUnmount(() => {
 }
 .small { font-size: 13px; }
 
-.added-chip {
-  background: var(--brand-soft);
-  color: var(--brand);
+.added-chip,
+.status-chip {
   font-weight: 600;
   padding: 2px 10px;
   border-radius: 999px;
   font-size: 12px;
+}
+.status-chip.saved {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.status-chip.loading {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text-secondary);
+}
+[data-theme="dark"] .status-chip.loading {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .actions {
@@ -619,6 +653,11 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-y: auto;
+  transition: opacity 200ms ease;
+}
+
+.chinese.stale {
+  opacity: 0.45;
 }
 
 .skeleton {
