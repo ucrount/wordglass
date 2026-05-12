@@ -21,6 +21,20 @@ import threading
 from pathlib import Path
 from typing import Any
 
+# Tatoeba's "cmn" lang code mixes Simplified and Traditional Chinese sentences.
+# We always serve Simplified to match the rest of the UI. zhconv is pure-Python
+# (~700KB) with no native deps; if for some reason it's not installed (older
+# environments before requirements.txt was updated), we fall through to the
+# raw text rather than crash.
+try:
+    import zhconv  # type: ignore
+
+    def _to_simplified(text: str) -> str:
+        return zhconv.convert(text, "zh-cn") if text else text
+except ImportError:
+    def _to_simplified(text: str) -> str:
+        return text
+
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 ECDICT_PATH = _DATA_DIR / "ecdict.db"
 TATOEBA_PATH = _DATA_DIR / "tatoeba.db"
@@ -210,7 +224,7 @@ def search_tatoeba(word: str, limit: int = 5) -> list[dict[str, str]]:
         return []
     rows.sort(key=lambda r: r["en_len"])
     picked = _pick_variety(rows, limit)
-    return [{"en": r["en"], "zh": r["zh"]} for r in picked]
+    return [{"en": r["en"], "zh": _to_simplified(r["zh"])} for r in picked]
 
 
 _FTS_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z'-]*")
