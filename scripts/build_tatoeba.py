@@ -23,8 +23,11 @@ import argparse
 import bz2
 import os
 import shutil
+import socket
 import sqlite3
 import sys
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -82,25 +85,68 @@ def download_and_extract(url: str, target_tsv: Path) -> None:
 
     Tatoeba's archives contain one file each (sentences.csv, links.csv) — the
     "csv" is actually tab-separated. We extract straight to `target_tsv`.
+    The download is resumable: if it gets interrupted, re-running picks up
+    from where the .tar.bz2 left off using HTTP Range.
     """
     if target_tsv.exists() and target_tsv.stat().st_size > 0:
         print(f"✓ {target_tsv} already exists, skipping download")
         return
-    print(f"→ Downloading {url}")
     tmp_archive = target_tsv.with_suffix(".tar.bz2")
-    urllib.request.urlretrieve(url, tmp_archive)
-    # tarfile is overkill; bz2 + raw read works because each archive holds one
-    # member, but to be safe we use the tarfile module.
+    print(f"→ Downloading {url}")
+    _download_resumable(url, tmp_archive)
     import tarfile
     with tarfile.open(tmp_archive, "r:bz2") as tar:
         members = [m for m in tar.getmembers() if m.isfile()]
         if not members:
             raise RuntimeError(f"empty archive: {url}")
-        # Extract first regular file as the target tsv
         m = members[0]
         with tar.extractfile(m) as src, open(target_tsv, "wb") as dst:
             shutil.copyfileobj(src, dst)
     tmp_archive.unlink(missing_ok=True)
+
+
+def _download_resumable(url: str, dest: Path, attempts: int = 6) -> None:
+    """Download `url` to `dest`, supporting Range-based resume on retry.
+
+    Tatoeba's CDN sits in Europe; from a CN VPS the connection can stall
+    silently. We give each attempt a 60s read timeout and on stall/error we
+    pick up where we left off using HTTP Range.
+    """
+    socket.setdefaulttimeout(60)
+    for attempt in range(1, attempts + 1):
+        have = dest.stat().st_size if dest.exists() else 0
+        headers = {"User-Agent": "wordglass-installer/1.0"}
+        if have > 0:
+            headers["Range"] = f"bytes={have}-"
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req) as resp, open(dest, "ab") as f:
+                total_hdr = resp.getheader("Content-Length")
+                total = int(total_hdr) + have if total_hdr else None
+                start = time.monotonic()
+                last_log = 0.0
+                downloaded = have
+                while True:
+                    chunk = resp.read(64 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    now = time.monotonic()
+                    if now - last_log > 2.0:
+                        mb = downloaded / (1024 * 1024)
+                        rate = (downloaded - have) / max(now - start, 0.001) / 1024
+                        if total:
+                            pct = downloaded / total * 100
+                            print(f"   {mb:6.1f} MB / {total/1024/1024:.1f} MB  ({pct:4.1f}%, {rate:.0f} KB/s)")
+                        else:
+                            print(f"   {mb:6.1f} MB  ({rate:.0f} KB/s)")
+                        last_log = now
+            return
+        except (urllib.error.URLError, socket.timeout, ConnectionError, TimeoutError) as e:
+            print(f"   ! attempt {attempt}/{attempts} failed: {e} — retrying in 3s")
+            time.sleep(3)
+    raise RuntimeError(f"Download failed after {attempts} attempts: {url}")
 
 
 def load_sentences(path: Path) -> tuple[dict[int, str], dict[int, str]]:
