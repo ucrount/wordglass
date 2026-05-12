@@ -4,6 +4,7 @@ import { RouterLink } from "vue-router";
 import { api, type HeatmapData, type Stats, type WordBrief, type WordOut } from "../api";
 import AddBar from "../components/AddBar.vue";
 import Heatmap from "../components/Heatmap.vue";
+import ReaderPanel from "../components/ReaderPanel.vue";
 import WordCard from "../components/WordCard.vue";
 import { isSpeechSupported, speak } from "../composables/tts";
 
@@ -254,6 +255,8 @@ onUnmounted(stopPolling);
         </section>
       </aside>
     </div>
+
+    <ReaderPanel class="reader-section" />
   </div>
 </template>
 
@@ -262,8 +265,10 @@ onUnmounted(stopPolling);
   display: flex;
   flex-direction: column;
   gap: 14px;
-  flex: 1;
-  min-height: 0;
+}
+
+.reader-section {
+  margin-top: 6px;
 }
 
 /* Page head */
@@ -277,13 +282,12 @@ onUnmounted(stopPolling);
 .page-head p { margin: 2px 0 0; font-size: 13px; }
 .small { font-size: 12px; }
 
-/* Body grid — fills remaining viewport */
+/* Body grid — top fold fills viewport, reader follows below */
 .body-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.65fr) minmax(340px, 1fr);
   gap: 32px;
-  flex: 1;
-  min-height: 0;
+  min-height: calc(100vh - 160px);
 }
 
 .col-main,
@@ -622,8 +626,7 @@ onUnmounted(stopPolling);
 
 /* When stacked (narrow screens), allow natural flow */
 @media (max-width: 1080px) {
-  .body-grid { grid-template-columns: 1fr; }
-  .dashboard { flex: none; }
+  .body-grid { grid-template-columns: 1fr; min-height: 0; }
   .preview, .due-big-widget { flex: none; }
   .examples { max-height: 240px; }
   .recent-grid { grid-template-columns: repeat(2, 1fr); }

@@ -13,7 +13,7 @@ from ..ai import (
 from ..auth import verify_token
 from ..db import SessionLocal, get_db
 from ..models import Example, Word
-from ..offline_dict import has_ecdict, has_tatoeba
+from ..offline_dict import has_ecdict, has_tatoeba, lookup_ecdict
 from ..schemas import WordBrief, WordCreate, WordOut
 from ..settings_store import get_settings, is_configured
 
@@ -24,6 +24,31 @@ router = APIRouter(prefix="/api/words", tags=["words"], dependencies=[Depends(ve
 def offline_status():
     """Tell the frontend which offline data files are loaded."""
     return {"ecdict": has_ecdict(), "tatoeba": has_tatoeba()}
+
+
+@router.get("/preview")
+def preview_word(
+    text: str = Query(..., min_length=1, max_length=80),
+    db: Session = Depends(get_db),
+):
+    """Instant ECDICT lookup for the reader-panel tooltip. Never writes.
+
+    Returns `already_saved=True` if this word (after ECDICT lemma resolution)
+    is already in the user's library — so the popup can show 已加入 instead of
+    an add button.
+    """
+    hit = lookup_ecdict(text.strip().lower())
+    if hit is None:
+        return {"found": False, "text": text}
+    existing = db.query(Word.id).filter(Word.text == hit["text"]).first()
+    return {
+        "found": True,
+        "text": hit["text"],
+        "phonetic": hit["phonetic"],
+        "pos": hit["pos"],
+        "translation": hit["translation"],
+        "already_saved": existing is not None,
+    }
 
 
 async def _enrich_word(word_id: int, do_category: bool, do_examples: bool) -> None:

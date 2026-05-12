@@ -36,6 +36,10 @@ export interface CategoriesOut {
   order: string[];
 }
 
+export type WordPreview =
+  | { found: true; text: string; phonetic: string; pos: string; translation: string; already_saved: boolean }
+  | { found: false; text: string };
+
 export interface Stats {
   total: number;
   due_today: number;
@@ -149,6 +153,13 @@ export const api = {
     request<{ updated: number; total: number }>("/api/words/recategorize", { method: "POST" }),
   offlineStatus: () =>
     request<{ ecdict: boolean; tatoeba: boolean }>("/api/words/offline-status"),
+  previewWord: (text: string) =>
+    request<WordPreview>(`/api/words/preview?text=${encodeURIComponent(text)}`),
+  translateText: (text: string) =>
+    request<{ translation: string }>("/api/translate", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
 
   dueWords: (limit = 50) => request<WordOut[]>(`/api/review/due?limit=${limit}`),
   submitReview: (word_id: number, mode: string, result: ReviewResult) =>
