@@ -48,22 +48,35 @@ apt-get install -y -qq git python3-venv python3-pip nodejs npm nginx curl openss
 # ──────────────────────────────────────────────────────────────────────────────
 # Git helpers — try direct, then mirrors
 # ──────────────────────────────────────────────────────────────────────────────
+# Per-attempt timeout. A direct github.com TCP connection on a CN VPS can hang
+# silently for many minutes — we'd rather bail in 20s and try the next mirror.
+GIT_TIMEOUT=20
+
 configure_git_tolerance() {
+  # If a transfer drops below 1 KB/s for 10s, give up so the next mirror is tried.
   sudo -u "$APP_USER" git config --global http.postBuffer 524288000 || true
-  sudo -u "$APP_USER" git config --global http.lowSpeedLimit 0 || true
-  sudo -u "$APP_USER" git config --global http.lowSpeedTime 999 || true
+  sudo -u "$APP_USER" git config --global http.lowSpeedLimit 1000 || true
+  sudo -u "$APP_USER" git config --global http.lowSpeedTime 10 || true
+}
+
+# Run git as APP_USER with a hard wall-clock timeout and no credential prompts.
+run_git() {
+  sudo -u "$APP_USER" \
+    env GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/true \
+    timeout --foreground "$GIT_TIMEOUT" git "$@"
 }
 
 git_clone_robust() {
   for prefix in "${GIT_MIRRORS[@]}"; do
     local url="${prefix}${REPO_URL}"
     local label="${prefix:-direct (github.com)}"
-    c_yellow "    Trying clone via $label …"
-    if sudo -u "$APP_USER" git clone -q "$url" "$APP_DIR"; then
-      [[ -n "$prefix" ]] && sudo -u "$APP_USER" git -C "$APP_DIR" remote set-url origin "$url"
+    c_yellow "    Trying clone via $label (≤${GIT_TIMEOUT}s) …"
+    if run_git clone -q "$url" "$APP_DIR"; then
+      [[ -n "$prefix" ]] && run_git -C "$APP_DIR" remote set-url origin "$url"
       c_green "    ✓ cloned via $label"
       return 0
     fi
+    c_yellow "    × $label failed/timed out, trying next…"
   done
   return 1
 }
@@ -72,16 +85,17 @@ git_fetch_robust() {
   for prefix in "${GIT_MIRRORS[@]}"; do
     local url="${prefix}${REPO_URL}"
     local label="${prefix:-direct (github.com)}"
-    c_yellow "    Trying fetch via $label …"
-    if sudo -u "$APP_USER" git -C "$APP_DIR" remote get-url origin &>/dev/null; then
-      sudo -u "$APP_USER" git -C "$APP_DIR" remote set-url origin "$url"
+    c_yellow "    Trying fetch via $label (≤${GIT_TIMEOUT}s) …"
+    if run_git -C "$APP_DIR" remote get-url origin &>/dev/null; then
+      run_git -C "$APP_DIR" remote set-url origin "$url"
     else
-      sudo -u "$APP_USER" git -C "$APP_DIR" remote add origin "$url"
+      run_git -C "$APP_DIR" remote add origin "$url"
     fi
-    if sudo -u "$APP_USER" git -C "$APP_DIR" fetch -q origin; then
+    if run_git -C "$APP_DIR" fetch -q origin; then
       c_green "    ✓ fetched via $label"
       return 0
     fi
+    c_yellow "    × $label failed/timed out, trying next…"
   done
   return 1
 }
