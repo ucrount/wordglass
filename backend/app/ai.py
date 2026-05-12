@@ -93,51 +93,98 @@ def _extract_json(raw: str) -> Any:
         raise
 
 
-async def fetch_word_payload(word: str, db: Session) -> dict[str, Any]:
-    """Build the payload for a new word using the cheapest source available.
+def lookup_local(word: str) -> dict[str, Any] | None:
+    """Pure-local lookup. ECDICT for word data, Tatoeba for examples.
 
-    Priority:
-      1. ECDICT → word / phonetic / pos / translation (offline, instant).
-         Tatoeba → up to 5 example sentences (offline).
-         AI (if configured) → category only.
-      2. If ECDICT misses but AI is configured, fall back to the full AI flow
-         (today's behaviour) so unusual words / phrases still get a result.
-      3. If ECDICT misses AND AI is unconfigured, raise — there's nothing
-         we can return.
+    Returns the payload on hit, None on ECDICT miss. Never raises, never calls
+    the network. Category is always "" — the caller decides whether/how to fill
+    it asynchronously.
+    """
+    text = word.strip().lower()
+    if not text:
+        return None
+    ecdict_hit = offline_dict.lookup_ecdict(text)
+    if ecdict_hit is None:
+        return None
+    examples = offline_dict.search_tatoeba(ecdict_hit["text"], limit=5)
+    return {
+        "text": ecdict_hit["text"],
+        "phonetic": ecdict_hit["phonetic"],
+        "pos": ecdict_hit["pos"],
+        "translation": ecdict_hit["translation"],
+        "category": "",
+        "examples": examples,
+    }
+
+
+async def fetch_word_payload(word: str, db: Session) -> dict[str, Any]:
+    """ECDICT-miss fallback. Calls AI for the full payload — slow, but
+    unavoidable for words the offline dictionary doesn't know. Raises
+    RuntimeError if AI isn't configured.
     """
     text = word.strip().lower()
     if not text:
         raise RuntimeError("空查询")
 
     settings_row = get_settings(db)
-    ai_configured = is_configured(settings_row)
-
-    ecdict_hit = offline_dict.lookup_ecdict(text)
-
-    if ecdict_hit is not None:
-        examples = offline_dict.search_tatoeba(ecdict_hit["text"], limit=5)
-        category = ""
-        if ai_configured:
-            try:
-                results = await _categorize_one(ecdict_hit["text"], settings_row)
-                category = results
-            except Exception:
-                category = ""  # category is best-effort, never fatal
-        return {
-            "text": ecdict_hit["text"],
-            "phonetic": ecdict_hit["phonetic"],
-            "pos": ecdict_hit["pos"],
-            "translation": ecdict_hit["translation"],
-            "category": category or "其他",
-            "examples": examples,
-        }
-
-    # ECDICT miss — fall back to full AI flow if available.
-    if not ai_configured:
+    if not is_configured(settings_row):
         raise RuntimeError(
             "本地词典里找不到这个词，而 AI 还没配置。打开右上角 ⚙ 设置一个 AI provider 再试。"
         )
     return await _full_ai_payload(text, settings_row)
+
+
+async def categorize_word(word: str, db: Session) -> str:
+    """Async AI categorisation for one word — meant for BackgroundTasks.
+    Silently returns "" if AI isn't configured or the call fails.
+    """
+    settings_row = get_settings(db)
+    if not is_configured(settings_row):
+        return ""
+    try:
+        return await _categorize_one(word, settings_row)
+    except Exception:
+        return ""
+
+
+async def generate_examples(word: str, translation: str, db: Session) -> list[dict[str, str]]:
+    """Ask AI for 5 example sentences for a word we already have basic data on.
+    Used when Tatoeba came up empty.
+    """
+    settings_row = get_settings(db)
+    if not is_configured(settings_row):
+        return []
+
+    try:
+        provider = build_provider(
+            settings_row.provider_type, settings_row.base_url, settings_row.api_key, settings_row.model
+        )
+        hint = f" (中文释义: {translation})" if translation else ""
+        prompt = (
+            f'Generate 5 English example sentences for the word "{word}"{hint}, '
+            f"ordered from easiest (short, basic) to hardest (formal, complex). "
+            f"Each example must contain the word (any inflection). "
+            f"Provide a natural Chinese translation for each.\n\n"
+            f'Return STRICT JSON: {{"examples":[{{"en":"...","zh":"..."}},...]}}'
+        )
+        content = await provider.chat(
+            "You generate vocabulary example sentences. Respond in JSON only.",
+            prompt,
+            json_mode=True,
+            max_tokens=800,
+        )
+        data = _extract_json(content)
+    except Exception:
+        return []
+
+    raw_examples = (
+        data.get("examples", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+    )
+    cleaned: list[dict[str, str]] = []
+    for ex in raw_examples[:5]:
+        if isinstance(ex, dict) and ex.get("en"):
+            cleaned.append({"en": str(ex["en"]).strip(), "zh": str(ex.get("zh", "")).strip()})
+    return cleaned
 
 
 async def _full_ai_payload(word: str, settings_row: Any) -> dict[str, Any]:
@@ -163,7 +210,7 @@ async def _full_ai_payload(word: str, settings_row: Any) -> dict[str, Any]:
     payload.setdefault("pos", "")
     payload.setdefault("translation", "")
     cat = payload.get("category", "").strip()
-    payload["category"] = cat if cat in CATEGORIES else "其他"
+    payload["category"] = cat if cat in CATEGORIES else ""
 
     cleaned: list[dict[str, str]] = []
     for ex in (payload.get("examples") or [])[:5]:
@@ -174,21 +221,17 @@ async def _full_ai_payload(word: str, settings_row: Any) -> dict[str, Any]:
 
 
 async def _categorize_one(word: str, settings_row: Any) -> str:
-    """One-word category lookup. Cheaper than the full prompt — used after an
-    ECDICT hit to tag the word."""
+    """One-word category lookup. Trimmed prompt + tight max_tokens to keep
+    latency under a second even on Deepseek/OpenAI."""
     provider = build_provider(
         settings_row.provider_type, settings_row.base_url, settings_row.api_key, settings_row.model
     )
-    prompt = (
-        f"Classify the English word \"{word}\" into ONE category from this list:\n"
-        f"{CATEGORY_LIST_STR}\n\n"
-        f'Return STRICT JSON: {{"category": "<category>"}}\n'
-        f"Output ONLY the JSON."
-    )
+    prompt = f'Word: {word}\nCategories: {CATEGORY_LIST_STR}\nJSON: {{"category":"..."}}'
     content = await provider.chat(
-        "You are a vocabulary categorizer. Respond in JSON only.",
+        "Pick the single best Chinese category for the given English word. JSON only.",
         prompt,
         json_mode=True,
+        max_tokens=40,
     )
     data = _extract_json(content)
     if isinstance(data, dict):

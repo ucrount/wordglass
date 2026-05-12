@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { RouterLink } from "vue-router";
 import { api, type HeatmapData, type Stats, type WordBrief, type WordOut } from "../api";
 import AddBar from "../components/AddBar.vue";
@@ -13,6 +13,7 @@ const heat = ref<HeatmapData>({ days: {}, since: "" });
 const recentError = ref("");
 const initialLoad = ref(true);
 const lastAdded = ref<WordOut | null>(null);
+const enriching = ref(false);
 
 const ttsSupported = isSpeechSupported();
 
@@ -43,10 +44,46 @@ async function refreshAll() {
   initialLoad.value = false;
 }
 
+// Poll a freshly-added word until background AI fills in category + examples,
+// or we hit the deadline (~15s). Local lookup returns instantly with category=""
+// and possibly empty examples; the backend's BackgroundTasks add them after.
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
+function stopPolling() {
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+  enriching.value = false;
+}
+
+function pollEnrichment(wordId: number) {
+  stopPolling();
+  const deadline = Date.now() + 18_000;
+  const tick = async () => {
+    if (Date.now() > deadline) { stopPolling(); return; }
+    try {
+      const fresh = await api.getWord(wordId);
+      if (lastAdded.value && lastAdded.value.id === wordId) {
+        lastAdded.value = fresh;
+      }
+      const done = !!fresh.category && fresh.examples.length > 0;
+      if (done) { stopPolling(); refreshRecent(); return; }
+    } catch { /* keep polling */ }
+    pollTimer = setTimeout(tick, 1500);
+  };
+  enriching.value = true;
+  pollTimer = setTimeout(tick, 1500);
+}
+
 function onAdded(w: WordOut) {
   lastAdded.value = w;
-  refreshAll();
+  refreshStats();
+  refreshRecent();
+  refreshHeatmap();
   if (ttsSupported) setTimeout(() => speak(w.text), 100);
+  if (!w.category || w.examples.length === 0) {
+    pollEnrichment(w.id);
+  }
 }
 
 const activeDays = computed(() => Object.keys(heat.value.days).length);
@@ -55,6 +92,7 @@ const totalActions = computed(() =>
 );
 
 onMounted(refreshAll);
+onUnmounted(stopPolling);
 </script>
 
 <template>

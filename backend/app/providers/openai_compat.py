@@ -8,11 +8,35 @@ import httpx
 
 from .base import Provider, ProviderError
 
+# Shared connection pool. A fresh httpx.AsyncClient per request would re-do TLS
+# (200-500ms over the wire to a CN-blocked endpoint) on every AI call; reusing
+# one keeps the TCP+TLS session warm for subsequent requests in the same
+# process. Created lazily so importing this module is still side-effect-free.
+_shared_client: httpx.AsyncClient | None = None
+
+
+def _client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, connect=10.0),
+            limits=httpx.Limits(max_keepalive_connections=20, keepalive_expiry=300),
+            http2=False,
+        )
+    return _shared_client
+
 
 class OpenAIProvider(Provider):
     name = "openai"
 
-    async def chat(self, system: str, user: str, *, json_mode: bool = False) -> str:
+    async def chat(
+        self,
+        system: str,
+        user: str,
+        *,
+        json_mode: bool = False,
+        max_tokens: int | None = None,
+    ) -> str:
         url = f"{self.base_url}/chat/completions"
         body: dict[str, Any] = {
             "model": self.model,
@@ -24,16 +48,17 @@ class OpenAIProvider(Provider):
         }
         if json_mode:
             body["response_format"] = {"type": "json_object"}
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
 
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(url, headers=self._headers(), json=body)
+        client = _client()
+        resp = await client.post(url, headers=self._headers(), json=body)
 
         if resp.status_code >= 400:
             # Some providers don't accept response_format → retry once without it
             if json_mode and resp.status_code == 400:
                 body.pop("response_format", None)
-                async with httpx.AsyncClient(timeout=60) as client:
-                    resp = await client.post(url, headers=self._headers(), json=body)
+                resp = await client.post(url, headers=self._headers(), json=body)
             if resp.status_code >= 400:
                 raise ProviderError(f"{resp.status_code}: {resp.text[:300]}")
 

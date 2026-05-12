@@ -12,7 +12,14 @@ from .base import Provider, ProviderError
 class GoogleProvider(Provider):
     name = "google"
 
-    async def chat(self, system: str, user: str, *, json_mode: bool = False) -> str:
+    async def chat(
+        self,
+        system: str,
+        user: str,
+        *,
+        json_mode: bool = False,
+        max_tokens: int | None = None,
+    ) -> str:
         url = f"{self.base_url}/v1beta/models/{self.model}:generateContent"
         body: dict[str, Any] = {
             "contents": [{"role": "user", "parts": [{"text": user}]}],
@@ -22,6 +29,8 @@ class GoogleProvider(Provider):
             body["systemInstruction"] = {"parts": [{"text": system}]}
         if json_mode:
             body["generationConfig"]["responseMimeType"] = "application/json"
+        if max_tokens is not None:
+            body["generationConfig"]["maxOutputTokens"] = max_tokens
 
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(url, params={"key": self.api_key}, json=body)

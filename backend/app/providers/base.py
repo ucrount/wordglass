@@ -27,8 +27,18 @@ class Provider(abc.ABC):
         self.model = model
 
     @abc.abstractmethod
-    async def chat(self, system: str, user: str, *, json_mode: bool = False) -> str:
-        """Send a single chat turn and return the assistant text content."""
+    async def chat(
+        self,
+        system: str,
+        user: str,
+        *,
+        json_mode: bool = False,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Send a single chat turn and return the assistant text content.
+
+        max_tokens is a hint — providers that don't support it should ignore it.
+        """
 
     @abc.abstractmethod
     async def list_models(self) -> list[str]:

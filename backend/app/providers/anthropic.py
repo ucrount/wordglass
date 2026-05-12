@@ -12,7 +12,14 @@ from .base import Provider, ProviderError
 class AnthropicProvider(Provider):
     name = "anthropic"
 
-    async def chat(self, system: str, user: str, *, json_mode: bool = False) -> str:
+    async def chat(
+        self,
+        system: str,
+        user: str,
+        *,
+        json_mode: bool = False,
+        max_tokens: int | None = None,
+    ) -> str:
         url = f"{self.base_url}/v1/messages"
         # Anthropic doesn't have an explicit JSON mode but follows prompt instructions well.
         if json_mode:
@@ -20,7 +27,7 @@ class AnthropicProvider(Provider):
 
         body: dict[str, Any] = {
             "model": self.model,
-            "max_tokens": 2048,
+            "max_tokens": max_tokens if max_tokens is not None else 2048,
             "messages": [{"role": "user", "content": user}],
         }
         if system:

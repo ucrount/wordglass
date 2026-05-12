@@ -36,13 +36,13 @@ async function submit() {
         class="bare-input"
         type="text"
         :disabled="loading"
-        placeholder="粘个英文单词或短语，回车 AI 自动给翻译 + 例句…"
+        placeholder="粘个英文单词或短语，回车立刻翻译…"
         autocomplete="off"
         autocapitalize="off"
         @keyup.enter="submit"
       />
       <button class="btn btn-primary" :disabled="loading || !text.trim()" @click="submit">
-        {{ loading ? "翻译中…" : "翻译" }}
+        {{ loading ? "查询中…" : "翻译" }}
       </button>
     </div>
     <Transition name="fade">
