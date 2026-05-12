@@ -1,4 +1,9 @@
-"""High-level AI helper used by routes. Reads settings from DB, dispatches via provider."""
+"""High-level AI helper used by routes. Reads settings from DB, dispatches via provider.
+
+Offline-first: ECDICT supplies word data and Tatoeba supplies example sentences
+without ever calling AI. AI is only consulted (when configured) to assign a
+category — and as a full fallback when ECDICT misses the word entirely.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from . import offline_dict
 from .providers import ProviderError, build_provider
 from .settings_store import get_settings, is_configured
 
@@ -88,15 +94,59 @@ def _extract_json(raw: str) -> Any:
 
 
 async def fetch_word_payload(word: str, db: Session) -> dict[str, Any]:
-    row = get_settings(db)
-    if not is_configured(row):
-        raise RuntimeError(
-            "AI is not configured yet. Open Settings and fill in provider / API key / model."
-        )
+    """Build the payload for a new word using the cheapest source available.
 
+    Priority:
+      1. ECDICT → word / phonetic / pos / translation (offline, instant).
+         Tatoeba → up to 5 example sentences (offline).
+         AI (if configured) → category only.
+      2. If ECDICT misses but AI is configured, fall back to the full AI flow
+         (today's behaviour) so unusual words / phrases still get a result.
+      3. If ECDICT misses AND AI is unconfigured, raise — there's nothing
+         we can return.
+    """
+    text = word.strip().lower()
+    if not text:
+        raise RuntimeError("空查询")
+
+    settings_row = get_settings(db)
+    ai_configured = is_configured(settings_row)
+
+    ecdict_hit = offline_dict.lookup_ecdict(text)
+
+    if ecdict_hit is not None:
+        examples = offline_dict.search_tatoeba(ecdict_hit["text"], limit=5)
+        category = ""
+        if ai_configured:
+            try:
+                results = await _categorize_one(ecdict_hit["text"], settings_row)
+                category = results
+            except Exception:
+                category = ""  # category is best-effort, never fatal
+        return {
+            "text": ecdict_hit["text"],
+            "phonetic": ecdict_hit["phonetic"],
+            "pos": ecdict_hit["pos"],
+            "translation": ecdict_hit["translation"],
+            "category": category or "其他",
+            "examples": examples,
+        }
+
+    # ECDICT miss — fall back to full AI flow if available.
+    if not ai_configured:
+        raise RuntimeError(
+            "本地词典里找不到这个词，而 AI 还没配置。打开右上角 ⚙ 设置一个 AI provider 再试。"
+        )
+    return await _full_ai_payload(text, settings_row)
+
+
+async def _full_ai_payload(word: str, settings_row: Any) -> dict[str, Any]:
+    """Original full-AI flow — used when ECDICT misses but AI is configured."""
     try:
-        provider = build_provider(row.provider_type, row.base_url, row.api_key, row.model)
-        content = await provider.chat(SYSTEM_PROMPT, word.strip(), json_mode=True)
+        provider = build_provider(
+            settings_row.provider_type, settings_row.base_url, settings_row.api_key, settings_row.model
+        )
+        content = await provider.chat(SYSTEM_PROMPT, word, json_mode=True)
     except ProviderError as e:
         raise RuntimeError(str(e)) from e
 
@@ -108,7 +158,7 @@ async def fetch_word_payload(word: str, db: Session) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise RuntimeError("AI returned unexpected JSON shape (not an object)")
 
-    payload.setdefault("text", word.strip().lower())
+    payload.setdefault("text", word)
     payload.setdefault("phonetic", "")
     payload.setdefault("pos", "")
     payload.setdefault("translation", "")
@@ -121,6 +171,31 @@ async def fetch_word_payload(word: str, db: Session) -> dict[str, Any]:
             cleaned.append({"en": str(ex["en"]).strip(), "zh": str(ex.get("zh", "")).strip()})
     payload["examples"] = cleaned
     return payload
+
+
+async def _categorize_one(word: str, settings_row: Any) -> str:
+    """One-word category lookup. Cheaper than the full prompt — used after an
+    ECDICT hit to tag the word."""
+    provider = build_provider(
+        settings_row.provider_type, settings_row.base_url, settings_row.api_key, settings_row.model
+    )
+    prompt = (
+        f"Classify the English word \"{word}\" into ONE category from this list:\n"
+        f"{CATEGORY_LIST_STR}\n\n"
+        f'Return STRICT JSON: {{"category": "<category>"}}\n'
+        f"Output ONLY the JSON."
+    )
+    content = await provider.chat(
+        "You are a vocabulary categorizer. Respond in JSON only.",
+        prompt,
+        json_mode=True,
+    )
+    data = _extract_json(content)
+    if isinstance(data, dict):
+        cat = str(data.get("category", "")).strip()
+        if cat in CATEGORIES:
+            return cat
+    return ""
 
 
 async def categorize_words_batch(

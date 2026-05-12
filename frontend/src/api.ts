@@ -147,6 +147,8 @@ export const api = {
   listCategories: () => request<CategoriesOut>("/api/words/categories"),
   recategorize: () =>
     request<{ updated: number; total: number }>("/api/words/recategorize", { method: "POST" }),
+  offlineStatus: () =>
+    request<{ ecdict: boolean; tatoeba: boolean }>("/api/words/offline-status"),
 
   dueWords: (limit = 50) => request<WordOut[]>(`/api/review/due?limit=${limit}`),
   submitReview: (word_id: number, mode: string, result: ReviewResult) =>

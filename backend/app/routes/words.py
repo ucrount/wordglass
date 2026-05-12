@@ -6,9 +6,16 @@ from ..ai import CATEGORIES, categorize_words_batch, fetch_word_payload
 from ..auth import verify_token
 from ..db import get_db
 from ..models import Example, Word
+from ..offline_dict import has_ecdict, has_tatoeba
 from ..schemas import WordBrief, WordCreate, WordOut
 
 router = APIRouter(prefix="/api/words", tags=["words"], dependencies=[Depends(verify_token)])
+
+
+@router.get("/offline-status")
+def offline_status():
+    """Tell the frontend which offline data files are loaded."""
+    return {"ecdict": has_ecdict(), "tatoeba": has_tatoeba()}
 
 
 @router.post("", response_model=WordOut)

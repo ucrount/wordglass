@@ -137,7 +137,7 @@ fi
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/backend/data"
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Step 3 / 5 — Configure
+# Step 3 / 5 — Configure + offline dictionaries
 # ──────────────────────────────────────────────────────────────────────────────
 c_blue "==> [3/5] Configuration"
 
@@ -204,6 +204,80 @@ fi
 # Always (re)ensure the site is enabled and default is gone — idempotent.
 ln -sf "$NGINX_FILE" /etc/nginx/sites-enabled/wordglass
 rm -f /etc/nginx/sites-enabled/default
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Offline dictionary data — ECDICT (required for offline lookup) + Tatoeba
+# (optional, used for example sentences when AI is not configured).
+# Both are downloaded once and left alone on subsequent runs.
+# ──────────────────────────────────────────────────────────────────────────────
+ECDICT_DB="$APP_DIR/backend/data/ecdict.db"
+TATOEBA_DB="$APP_DIR/backend/data/tatoeba.db"
+
+# ECDICT — official release ships a zipped sqlite file.
+ECDICT_URL_BASE="https://github.com/skywind3000/ECDICT/releases/download/1.0.28/ecdict-sqlite-28.zip"
+# Tatoeba — built via scripts/build_tatoeba.py and uploaded to our own release.
+# Edit this tag/URL after uploading. If the URL 404s we silently skip.
+TATOEBA_URL_BASE="https://github.com/ucrount/wordglass/releases/download/data-v1/tatoeba.db.bz2"
+
+# Try downloading $1 (a github URL) into $2, racing through GIT_MIRRORS prefixes.
+download_github() {
+  local base_url="$1"
+  local out="$2"
+  for prefix in "${GIT_MIRRORS[@]}"; do
+    local url="${prefix}${base_url}"
+    local label="${prefix:-direct (github.com)}"
+    if curl -fsSL --max-time 180 --retry 1 -o "$out.part" "$url"; then
+      mv "$out.part" "$out"
+      c_green "    ✓ downloaded via $label"
+      return 0
+    fi
+    rm -f "$out.part"
+    c_yellow "    × $label failed, trying next…"
+  done
+  return 1
+}
+
+if [[ ! -f "$ECDICT_DB" ]]; then
+  c_blue "==> Fetching ECDICT (offline English↔Chinese dictionary, ~50MB zipped)"
+  TMP_ZIP="/tmp/ecdict-$$.zip"
+  if download_github "$ECDICT_URL_BASE" "$TMP_ZIP"; then
+    apt-get install -y -qq unzip >/dev/null 2>&1 || true
+    unzip -o -q "$TMP_ZIP" -d "$APP_DIR/backend/data/"
+    rm -f "$TMP_ZIP"
+    # The zip extracts a .db file whose name varies across versions
+    # (ecdict.db / stardict.db). Pick the largest .db that isn't ours.
+    if [[ ! -f "$ECDICT_DB" ]]; then
+      CAND=$(find "$APP_DIR/backend/data" -maxdepth 1 -name '*.db' \
+              ! -name 'wordglass.db' ! -name 'tatoeba.db' \
+              -printf '%s %p\n' 2>/dev/null | sort -rn | head -1 | awk '{print $2}')
+      if [[ -n "$CAND" ]]; then mv "$CAND" "$ECDICT_DB"; fi
+    fi
+    chown "$APP_USER:$APP_USER" "$ECDICT_DB" 2>/dev/null || true
+    c_green "    ✓ ECDICT ready at $ECDICT_DB"
+  else
+    c_yellow "    ! ECDICT download failed — offline lookup will be disabled. App still works if AI is configured."
+  fi
+else
+  c_green "✓ ECDICT already present, skipping download"
+fi
+
+if [[ ! -f "$TATOEBA_DB" ]]; then
+  c_blue "==> Fetching Tatoeba example sentences (optional, ~40MB)"
+  TMP_BZ="/tmp/tatoeba-$$.db.bz2"
+  if download_github "$TATOEBA_URL_BASE" "$TMP_BZ"; then
+    bunzip2 -f "$TMP_BZ"
+    mv "${TMP_BZ%.bz2}" "$TATOEBA_DB"
+    chown "$APP_USER:$APP_USER" "$TATOEBA_DB" 2>/dev/null || true
+    c_green "    ✓ Tatoeba ready at $TATOEBA_DB"
+  else
+    rm -f "$TMP_BZ"
+    c_yellow "    ! Tatoeba release asset not available — example sentences in offline mode disabled."
+    c_yellow "      To enable: run scripts/build_tatoeba.py locally, upload the resulting"
+    c_yellow "      tatoeba.db.bz2 to a GitHub release, and update TATOEBA_URL_BASE in this script."
+  fi
+else
+  c_green "✓ Tatoeba already present, skipping download"
+fi
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Step 4 / 5 — Build backend + frontend (using fast mirrors)
