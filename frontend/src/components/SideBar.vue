@@ -107,6 +107,7 @@ const TOOLS = [
   gap: 10px;
   text-decoration: none;
   color: var(--text-primary);
+  font-family: var(--font-serif);
   font-weight: 700;
   font-size: 17px;
   letter-spacing: -0.01em;
@@ -115,11 +116,29 @@ const TOOLS = [
 }
 
 .dot {
-  width: 22px;
+  width: 18px;
   height: 22px;
-  border-radius: 7px;
-  background: linear-gradient(135deg, #a8c5ff 0%, #d1b3ff 50%, #ffb3c7 100%);
-  box-shadow: 0 2px 8px rgba(120, 140, 220, 0.3);
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--brand) 0%, var(--accent) 100%);
+  box-shadow:
+    1px 0 0 var(--hairline),
+    inset -1px 0 0 rgba(255, 255, 255, 0.10),
+    0 2px 6px rgba(50, 60, 40, 0.18);
+  position: relative;
+  flex-shrink: 0;
+}
+
+.dot::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 4px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.45);
+  box-shadow:
+    0 3px 0 rgba(255, 255, 255, 0.30),
+    0 6px 0 rgba(255, 255, 255, 0.20);
 }
 
 .nav {
