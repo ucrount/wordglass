@@ -1,18 +1,35 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
-import {
-  api,
-  type ProviderPreset,
-  type ProviderType,
-  type SettingsIn,
-  type SettingsOut,
-} from "../api";
+import { computed, onMounted, ref } from "vue";
+import { api, type SettingsIn, type SettingsOut, type ProviderPreset } from "../api";
+
+import AiProviderPanel from "../components/settings/AiProviderPanel.vue";
+import TestPanel from "../components/settings/TestPanel.vue";
+import AuthPanel from "../components/settings/AuthPanel.vue";
+import AiLogsPanel from "../components/settings/AiLogsPanel.vue";
+import SysLogsPanel from "../components/settings/SysLogsPanel.vue";
+import OfflinePanel from "../components/settings/OfflinePanel.vue";
+import AboutPanel from "../components/settings/AboutPanel.vue";
+
+type Tab = "ai" | "test" | "auth" | "log_ai" | "log_sys" | "offline" | "about";
+
+const STORAGE_KEY_TAB = "wordglass.settings.tab";
+
+function loadTab(): Tab {
+  const v = localStorage.getItem(STORAGE_KEY_TAB) || "ai";
+  const valid: Tab[] = ["ai", "test", "auth", "log_ai", "log_sys", "offline", "about"];
+  return (valid.includes(v as Tab) ? v : "ai") as Tab;
+}
+
+const tab = ref<Tab>(loadTab());
+function setTab(t: Tab) {
+  tab.value = t;
+  localStorage.setItem(STORAGE_KEY_TAB, t);
+}
 
 const presets = ref<ProviderPreset[]>([]);
 const original = ref<SettingsOut | null>(null);
-
 const form = ref<{
-  provider_type: ProviderType;
+  provider_type: SettingsIn["provider_type"];
   base_url: string;
   api_key: string;
   model: string;
@@ -25,17 +42,8 @@ const form = ref<{
   auth_token: "",
 });
 
-const showKey = ref(false);
 const loading = ref(true);
-const saving = ref(false);
-const testing = ref(false);
-const fetchingModels = ref(false);
 const message = ref<{ kind: "ok" | "err"; text: string } | null>(null);
-const models = ref<string[]>([]);
-
-const activePreset = computed(() =>
-  presets.value.find((p) => p.id === form.value.provider_type)
-);
 
 async function load() {
   loading.value = true;
@@ -44,9 +52,9 @@ async function load() {
     original.value = s;
     presets.value = p.presets;
     form.value = {
-      provider_type: s.provider_type,
+      provider_type: s.provider_type as SettingsIn["provider_type"],
       base_url: s.base_url,
-      api_key: "", // never preload; user pastes a new one to change
+      api_key: "",
       model: s.model,
       auth_token: "",
     };
@@ -57,258 +65,114 @@ async function load() {
   }
 }
 
-function applyPresetExample(example: { base_url: string; model: string }) {
-  form.value.base_url = example.base_url;
-  form.value.model = example.model;
-}
-
 function buildPayload(): SettingsIn {
   return {
     provider_type: form.value.provider_type,
     base_url: form.value.base_url,
-    api_key: form.value.api_key, // "" means keep existing on backend
+    api_key: form.value.api_key,
     model: form.value.model,
     auth_token: form.value.auth_token,
   };
 }
 
 async function save() {
-  saving.value = true;
   message.value = null;
   try {
     const updated = await api.saveSettings(buildPayload());
     original.value = updated;
-    form.value.api_key = ""; // cleared after save
+    form.value.api_key = "";
     form.value.auth_token = "";
     message.value = { kind: "ok", text: "已保存" };
+    setTimeout(() => { if (message.value?.kind === "ok") message.value = null; }, 2500);
   } catch (e: any) {
     message.value = { kind: "err", text: e.message || "保存失败" };
-  } finally {
-    saving.value = false;
   }
 }
 
-async function test() {
-  testing.value = true;
-  message.value = null;
-  try {
-    const r = await api.testSettings(buildPayload());
-    if (r.ok) {
-      message.value = { kind: "ok", text: `连接成功：${r.echo || "ok"}` };
-    } else {
-      message.value = { kind: "err", text: `连接失败：${r.error}` };
-    }
-  } catch (e: any) {
-    message.value = { kind: "err", text: e.message || "测试失败" };
-  } finally {
-    testing.value = false;
-  }
-}
-
-async function fetchModels() {
-  fetchingModels.value = true;
-  message.value = null;
-  try {
-    const { models: list } = await api.listModels(buildPayload());
-    models.value = list;
-    if (list.length === 0) {
-      message.value = { kind: "err", text: "未返回模型列表（接口可能不支持）" };
-    } else {
-      message.value = { kind: "ok", text: `拉取到 ${list.length} 个模型` };
-    }
-  } catch (e: any) {
-    message.value = { kind: "err", text: e.message || "获取失败" };
-  } finally {
-    fetchingModels.value = false;
-  }
-}
-
-// When user switches provider, auto-fill base_url and model from first preset example
-// — but only if those fields are currently empty (don't clobber user edits).
-watch(
-  () => form.value.provider_type,
-  (newType, oldType) => {
-    if (oldType === undefined) return;
-    const preset = presets.value.find((p) => p.id === newType);
-    if (preset && preset.examples.length > 0) {
-      if (!form.value.base_url) form.value.base_url = preset.examples[0].base_url;
-      if (!form.value.model) form.value.model = preset.examples[0].model;
-    }
-    models.value = []; // clear stale list when switching provider
-  }
-);
+const aiBadge = ref(0);
+const sysBadge = ref(0);
 
 onMounted(load);
+
+const tabs = computed(() => [
+  { group: "配置", items: [
+    { id: "ai" as const,   icon: "⚙",  label: "AI Provider" },
+    { id: "test" as const, icon: "🔌", label: "测试 & 诊断" },
+    { id: "auth" as const, icon: "🔒", label: "访问令牌" },
+  ]},
+  { group: "日志 & 监控", items: [
+    { id: "log_ai" as const,  icon: "🤖", label: "AI 调用记录", badge: aiBadge.value },
+    { id: "log_sys" as const, icon: "📋", label: "系统日志",    badge: sysBadge.value },
+  ]},
+  { group: "关于", items: [
+    { id: "offline" as const, icon: "📚", label: "离线数据" },
+    { id: "about" as const,   icon: "ℹ",  label: "版本信息" },
+  ]},
+]);
 </script>
 
 <template>
   <section class="settings">
-    <h1>设置</h1>
-    <p class="muted subtitle">配置 AI 服务，全部数据存在后端 SQLite，刷新和换设备都不会丢。</p>
+    <header class="page-head">
+      <h1>设置</h1>
+      <p class="muted small">AI 配置、连接测试、调用日志和系统诊断都在这里</p>
+    </header>
 
-    <div v-if="loading" class="glass placeholder">
-      <p>加载中…</p>
-    </div>
+    <div v-if="loading" class="placeholder glass">加载中…</div>
 
-    <template v-else>
-      <!-- 1. Provider -->
-      <div class="card glass">
-        <div class="card-head">
-          <h2>① 协议类型</h2>
-          <span v-if="original?.configured" class="badge ok">已配置</span>
-          <span v-else class="badge warn">未配置</span>
-        </div>
-
-        <div class="providers">
-          <label
-            v-for="p in presets"
-            :key="p.id"
-            class="provider"
-            :class="{ active: form.provider_type === p.id }"
-          >
-            <input
-              type="radio"
-              :value="p.id"
-              v-model="form.provider_type"
-              class="visually-hidden"
-            />
-            <div class="provider-label">{{ p.label }}</div>
-            <div class="provider-desc tertiary">{{ p.description }}</div>
-          </label>
-        </div>
-
-        <div v-if="activePreset && activePreset.examples.length > 1" class="quick-fills">
-          <span class="tertiary small">快速填入：</span>
+    <div v-else class="settings-layout glass">
+      <aside class="settings-nav">
+        <template v-for="group in tabs" :key="group.group">
+          <div class="nav-h">{{ group.group }}</div>
           <button
-            v-for="ex in activePreset.examples"
-            :key="ex.base_url"
-            class="chip"
-            type="button"
-            @click="applyPresetExample(ex)"
+            v-for="item in group.items"
+            :key="item.id"
+            class="nav-item"
+            :class="{ active: tab === item.id }"
+            @click="setTab(item.id)"
           >
-            {{ ex.name }}
+            <span class="ico">{{ item.icon }}</span>
+            <span class="label">{{ item.label }}</span>
+            <span v-if="(item as any).badge" class="nav-badge">{{ (item as any).badge }}</span>
           </button>
-        </div>
-      </div>
+        </template>
+      </aside>
 
-      <!-- 2. Connection details -->
-      <div class="card glass">
-        <div class="card-head">
-          <h2>② 连接信息</h2>
-        </div>
-
-        <div class="field">
-          <label>Base URL</label>
-          <input
-            v-model="form.base_url"
-            class="input"
-            type="text"
-            placeholder="https://api.deepseek.com/v1"
+      <div class="settings-content">
+        <Transition name="fade" mode="out-in">
+          <AiProviderPanel
+            v-if="tab === 'ai'"
+            :form="form"
+            :original="original"
+            :presets="presets"
+            :message="message"
+            @save="save"
           />
-          <div class="tertiary small">
-            可填官方地址、第三方代理或本地服务（如 Ollama 的 http://127.0.0.1:11434/v1）
-          </div>
-        </div>
-
-        <div class="field">
-          <label>API Key</label>
-          <div class="key-row">
-            <input
-              v-model="form.api_key"
-              class="input"
-              :type="showKey ? 'text' : 'password'"
-              :placeholder="
-                original?.api_key_set
-                  ? `已保存（${original.api_key_preview}），留空表示不修改`
-                  : '粘贴你的 API Key'
-              "
-              autocomplete="off"
-            />
-            <button class="eye" type="button" @click="showKey = !showKey" :title="showKey ? '隐藏' : '显示'">
-              {{ showKey ? "🙈" : "👁" }}
-            </button>
-          </div>
-        </div>
-
-        <div class="field">
-          <label>Model</label>
-          <div class="model-row">
-            <input
-              v-model="form.model"
-              class="input"
-              type="text"
-              placeholder="deepseek-chat"
-              list="models-list"
-            />
-            <datalist id="models-list">
-              <option v-for="m in models" :key="m" :value="m" />
-            </datalist>
-            <button
-              class="btn"
-              type="button"
-              :disabled="fetchingModels"
-              @click="fetchModels"
-            >
-              {{ fetchingModels ? "拉取中…" : "🔄 获取模型列表" }}
-            </button>
-          </div>
-          <div v-if="models.length > 0" class="model-pills">
-            <button
-              v-for="m in models"
-              :key="m"
-              type="button"
-              class="chip"
-              :class="{ active: form.model === m }"
-              @click="form.model = m"
-            >
-              {{ m }}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- 3. Auth token (optional) -->
-      <div class="card glass">
-        <div class="card-head">
-          <h2>③ 接口访问令牌（可选）</h2>
-        </div>
-        <p class="muted">
-          如果你的 VPS 公网暴露在 0.0.0.0，建议设一个随机串保护接口。设了之后浏览器会自动把它带在请求里（存浏览器本地）。
-          <strong v-if="original?.auth_token_set">当前：已设置</strong>
-          <strong v-else>当前：未设置（接口开放访问）</strong>
-        </p>
-        <div class="field">
-          <label>新令牌（留空 = 不修改；填 `none` = 清除）</label>
-          <input
-            v-model="form.auth_token"
-            class="input"
-            type="text"
-            placeholder="留空表示不修改"
+          <TestPanel
+            v-else-if="tab === 'test'"
+            :form="form"
+            :original="original"
           />
-        </div>
+          <AuthPanel
+            v-else-if="tab === 'auth'"
+            :form="form"
+            :original="original"
+            :message="message"
+            @save="save"
+          />
+          <AiLogsPanel
+            v-else-if="tab === 'log_ai'"
+            @count="(n) => aiBadge = n"
+          />
+          <SysLogsPanel
+            v-else-if="tab === 'log_sys'"
+            @count="(n) => sysBadge = n"
+          />
+          <OfflinePanel v-else-if="tab === 'offline'" />
+          <AboutPanel v-else-if="tab === 'about'" />
+        </Transition>
       </div>
-
-      <!-- Message -->
-      <Transition name="fade">
-        <div
-          v-if="message"
-          class="msg glass-dim"
-          :class="message.kind"
-        >
-          {{ message.text }}
-        </div>
-      </Transition>
-
-      <!-- Actions -->
-      <div class="actions">
-        <button class="btn" :disabled="testing" @click="test">
-          {{ testing ? "测试中…" : "🔌 测试连接" }}
-        </button>
-        <button class="btn btn-primary" :disabled="saving" @click="save">
-          {{ saving ? "保存中…" : "💾 保存设置" }}
-        </button>
-      </div>
-    </template>
+    </div>
   </section>
 </template>
 
@@ -316,224 +180,133 @@ onMounted(load);
 .settings {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  max-width: 760px;
+  gap: 14px;
+  max-width: 1100px;
   margin: 0 auto;
 }
 
 h1 {
   font-family: var(--font-serif);
-  font-size: 32px;
+  font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.02em;
   margin: 0;
 }
 
-.subtitle {
-  margin: -8px 0 0;
-  font-size: 15px;
-}
+.small { font-size: 13px; }
 
-.placeholder {
-  padding: 48px;
-  text-align: center;
-}
+.placeholder { padding: 48px; text-align: center; color: var(--text-secondary); }
 
-.card {
-  padding: 24px 26px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.card-head h2 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.badge {
-  font-size: 12px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-weight: 500;
-}
-.badge.ok {
-  background: color-mix(in srgb, var(--success) 18%, transparent);
-  color: var(--success);
-}
-.badge.warn {
-  background: color-mix(in srgb, var(--warn) 18%, transparent);
-  color: var(--warn);
-}
-
-/* Provider radio cards */
-.providers {
+.settings-layout {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
-}
-
-.provider {
-  cursor: pointer;
-  padding: 14px 16px;
-  border-radius: var(--radius-md);
-  border: 1.5px solid var(--hairline);
-  background: var(--glass-bg-dim);
-  transition: border-color 200ms ease, background 200ms ease, transform 120ms ease;
-}
-
-.provider:hover {
-  background: var(--glass-bg);
-}
-
-.provider.active {
-  border-color: var(--brand);
-  background: var(--brand-soft);
-}
-
-.provider-label {
-  font-weight: 600;
-  font-size: 15px;
-}
-
-.provider-desc {
-  font-size: 12px;
-  margin-top: 3px;
-}
-
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
+  grid-template-columns: 200px 1fr;
+  gap: 0;
+  min-height: 560px;
+  padding: 0;
   overflow: hidden;
-  clip-path: inset(50%);
 }
 
-.quick-fills {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-/* Fields */
-.field {
+.settings-nav {
+  padding: 18px 12px;
+  border-right: 1px solid var(--hairline);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
 }
 
-.field > label {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-secondary);
+.nav-h {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  padding: 8px 12px 6px;
+  margin-top: 4px;
 }
+.nav-h:first-child { margin-top: 0; }
 
-.small {
-  font-size: 12px;
-}
-
-.key-row {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.key-row .input {
-  padding-right: 44px;
-}
-.key-row .eye {
-  position: absolute;
-  right: 6px;
+.nav-item {
+  appearance: none;
   background: transparent;
   border: none;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  cursor: pointer;
-  font-size: 16px;
-}
-.key-row .eye:hover {
-  background: var(--glass-bg-dim);
-}
-
-.model-row {
   display: flex;
+  align-items: center;
   gap: 10px;
-}
-.model-row .input {
-  flex: 1;
-}
-.model-row .btn {
-  white-space: nowrap;
-}
-
-.model-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 4px;
-  max-height: 160px;
-  overflow-y: auto;
-}
-
-.chip {
-  appearance: none;
-  border: 1px solid var(--hairline);
-  background: var(--glass-bg-dim);
-  padding: 5px 11px;
-  border-radius: 999px;
-  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 10px;
   font: inherit;
-  font-size: 12px;
-  font-family: var(--font-mono);
+  font-size: 13px;
   color: var(--text-secondary);
-  transition: background 200ms ease, color 200ms ease, border-color 200ms ease;
+  cursor: pointer;
+  text-align: left;
+  position: relative;
+  transition: background 150ms, color 150ms;
 }
-
-.chip:hover {
-  background: var(--glass-bg);
+.nav-item:hover {
+  background: var(--glass-bg-dim);
   color: var(--text-primary);
 }
-
-.chip.active {
+.nav-item.active {
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+}
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
   background: var(--brand);
-  color: var(--brand-strong-text);
-  border-color: var(--brand);
+  border-radius: 0 2px 2px 0;
+}
+.nav-item .ico {
+  width: 16px;
+  font-style: normal;
+  opacity: 0.7;
+}
+.nav-item.active .ico { opacity: 1; }
+.nav-item .label { flex: 1; }
+.nav-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-variant-numeric: tabular-nums;
 }
 
-.msg {
-  padding: 12px 18px;
-  border-radius: var(--radius-md);
-  font-size: 14px;
-}
-.msg.ok {
-  background: color-mix(in srgb, var(--success) 18%, transparent);
-  color: var(--success);
-}
-.msg.err {
-  background: color-mix(in srgb, var(--danger) 16%, transparent);
-  color: var(--danger);
+.settings-content {
+  padding: 22px 26px;
+  min-width: 0;
+  overflow-y: auto;
+  max-height: calc(100vh - 180px);
 }
 
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 8px;
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
 }
 
-@media (max-width: 640px) {
-  .model-row {
-    flex-direction: column;
+@media (max-width: 860px) {
+  .settings-layout {
+    grid-template-columns: 1fr;
   }
+  .settings-nav {
+    border-right: none;
+    border-bottom: 1px solid var(--hairline);
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 10px;
+  }
+  .nav-h { display: none; }
+  .nav-item { flex-shrink: 0; }
+  .settings-content { padding: 18px 16px; max-height: none; }
 }
 </style>
