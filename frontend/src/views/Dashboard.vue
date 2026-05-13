@@ -267,6 +267,7 @@ onUnmounted(stopPolling);
 /* Page head */
 .page-head { flex-shrink: 0; }
 .page-head h1 {
+  font-family: var(--font-serif);
   font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.02em;
@@ -322,6 +323,7 @@ onUnmounted(stopPolling);
 }
 
 .word-text {
+  font-family: var(--font-serif);
   font-size: clamp(24px, 2.5vw, 30px);
   font-weight: 700;
   letter-spacing: -0.02em;
@@ -332,7 +334,7 @@ onUnmounted(stopPolling);
 .speaker {
   appearance: none;
   border: none;
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--glass-bg-dim);
   width: 30px;
   height: 30px;
   border-radius: 50%;
@@ -341,7 +343,6 @@ onUnmounted(stopPolling);
   transition: background 200ms ease, transform 200ms ease;
   align-self: center;
 }
-[data-theme="dark"] .speaker { background: rgba(255, 255, 255, 0.06); }
 .speaker:hover { transform: scale(1.08); background: var(--brand-soft); }
 
 .phonetic {
@@ -351,13 +352,14 @@ onUnmounted(stopPolling);
 }
 
 .pos {
+  font-family: var(--font-serif);
+  font-style: italic;
   padding: 2px 8px;
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--brand-soft);
+  color: var(--brand);
   font-size: 11px;
-  color: var(--text-secondary);
 }
-[data-theme="dark"] .pos { background: rgba(255, 255, 255, 0.08); }
 
 .practice-btn {
   text-decoration: none;
@@ -370,7 +372,7 @@ onUnmounted(stopPolling);
 .translation {
   font-size: 16px;
   font-weight: 500;
-  color: var(--brand);
+  color: var(--accent);
   flex-shrink: 0;
   word-wrap: break-word;
 }
@@ -426,6 +428,8 @@ onUnmounted(stopPolling);
 
 .example-body { min-width: 0; flex: 1; }
 .example-en {
+  font-family: var(--font-serif);
+  font-style: italic;
   font-size: 14px;
   color: var(--text-primary);
   line-height: 1.5;
@@ -537,11 +541,12 @@ onUnmounted(stopPolling);
 }
 
 .big-num {
+  font-family: var(--font-serif);
   font-size: clamp(60px, 7vw, 96px);
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: -0.03em;
   line-height: 1;
-  background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+  background: linear-gradient(135deg, var(--brand) 0%, var(--accent) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -592,8 +597,9 @@ onUnmounted(stopPolling);
 .stat-icon { font-size: 18px; line-height: 1; flex-shrink: 0; }
 .stat-info { display: flex; flex-direction: column; min-width: 0; }
 .stat-num {
+  font-family: var(--font-serif);
   font-size: 18px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.1;
 }
