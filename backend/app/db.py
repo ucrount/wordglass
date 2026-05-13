@@ -1,3 +1,5 @@
+import secrets
+
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -17,20 +19,46 @@ def get_db():
         db.close()
 
 
-def ensure_schema():
-    """Idempotent migrations for columns added after initial release.
+def _add_column_if_missing(conn, table: str, column_name: str, ddl: str) -> None:
+    """SQLite-safe idempotent ALTER TABLE ADD COLUMN."""
+    inspector = inspect(conn)
+    cols = {c["name"] for c in inspector.get_columns(table)}
+    if column_name not in cols:
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {ddl}"))
 
-    SQLAlchemy's create_all only creates missing tables — it won't add
-    new columns to an existing table. We apply lightweight ALTER TABLE
-    statements here for any columns the current code expects.
-    """
+
+def ensure_schema():
+    """Idempotent migrations: create new tables, add new columns, seed app_config."""
+    # Create all tables that are missing
+    Base.metadata.create_all(bind=engine)
+
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
 
-    if "words" in tables:
-        cols = {c["name"] for c in inspector.get_columns("words")}
-        if "category" not in cols:
-            with engine.begin() as conn:
-                conn.execute(
-                    text("ALTER TABLE words ADD COLUMN category VARCHAR(50) DEFAULT ''")
-                )
+    # Add columns added after initial release
+    with engine.begin() as conn:
+        if "words" in tables:
+            _add_column_if_missing(conn, "words", "category",
+                                   "category VARCHAR(50) DEFAULT ''")
+            _add_column_if_missing(conn, "words", "user_id",
+                                   "user_id INTEGER REFERENCES users(id)")
+        if "review_logs" in tables:
+            _add_column_if_missing(conn, "review_logs", "user_id",
+                                   "user_id INTEGER REFERENCES users(id)")
+        if "settings" in tables:
+            _add_column_if_missing(conn, "settings", "user_id",
+                                   "user_id INTEGER REFERENCES users(id)")
+
+    # Seed AppConfig singleton (id=1) with random invite_code + jwt_secret
+    from .models import AppConfig
+    with SessionLocal() as db:
+        cfg = db.query(AppConfig).filter(AppConfig.id == 1).first()
+        if cfg is None:
+            cfg = AppConfig(
+                id=1,
+                invite_code=secrets.token_urlsafe(24),
+                registration_enabled=1,
+                jwt_secret=secrets.token_urlsafe(48),
+            )
+            db.add(cfg)
+            db.commit()
