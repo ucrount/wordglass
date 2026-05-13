@@ -41,9 +41,6 @@ async function submit() {
         autocapitalize="off"
         @keyup.enter="submit"
       />
-      <button class="btn btn-primary" :disabled="loading || !text.trim()" @click="submit">
-        {{ loading ? "查询中…" : "翻译" }}
-      </button>
     </div>
     <Transition name="fade">
       <div v-if="error" class="hint error">{{ error }}</div>
@@ -87,10 +84,6 @@ async function submit() {
 
 .bare-input::placeholder {
   color: var(--text-tertiary);
-}
-
-.btn {
-  white-space: nowrap;
 }
 
 .hint {

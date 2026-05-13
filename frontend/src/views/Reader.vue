@@ -593,7 +593,11 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  min-height: 0;
+  /* Fill the viewport minus .main-inner's top (28px) + bottom (40px) padding,
+   * so the 4 panes use the available height and internal scroll handles
+   * overflow inside each pane. */
+  min-height: calc(100vh - 68px);
+  height: calc(100vh - 68px);
 }
 
 /* ─── Top progress bar ──────────────────────────────────── */
@@ -755,7 +759,8 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 18px;
-  min-height: 0;
+  flex: 1;        /* grow to fill available vertical space */
+  min-height: 0;  /* allow children to shrink under flex */
 }
 
 .pane {
@@ -764,7 +769,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-  min-height: 360px;
+  min-height: 0;  /* allow .reading/.target to scroll, not the pane itself */
+  overflow: hidden;
 }
 
 .pane-head {
@@ -813,6 +819,7 @@ onBeforeUnmount(() => {
 /* ─── Textarea ────────────────────────────────────── */
 .textarea {
   flex: 1;
+  min-height: 0;
   appearance: none;
   border: none;
   outline: none;
@@ -824,6 +831,7 @@ onBeforeUnmount(() => {
   line-height: 1.7;
   color: var(--text-primary);
   font-family: var(--font-ui);
+  overflow-y: auto;
 }
 
 .textarea::placeholder {
@@ -834,6 +842,8 @@ onBeforeUnmount(() => {
 .reading {
   position: relative;
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: 4px 2px;
   font-size: 16px;
   line-height: 1.8;
@@ -951,21 +961,23 @@ onBeforeUnmount(() => {
 }
 .link-btn:hover { text-decoration-color: var(--brand); }
 
-/* ─── Bottom row · two equal columns, fixed min-height ── */
+/* ─── Bottom row · two equal columns, share vertical space ── */
 .bottom {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 18px;
-  min-height: 180px;
+  flex: 0 0 220px;   /* fixed-ish height so .panes get the rest */
+  min-height: 0;
 }
 
 .word-panel,
 .usage-panel {
   padding: 14px 18px;
-  min-height: 180px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .word-panel { border-left: 3px solid var(--brand); }
@@ -1138,9 +1150,30 @@ onBeforeUnmount(() => {
 
 /* ─── Responsive ─────────────────────────────────── */
 @media (max-width: 1000px) {
-  .panes { grid-template-columns: 1fr; }
-  .pane { min-height: 260px; }
-  .bottom { grid-template-columns: 1fr; }
+  /* On mobile, drop the viewport-lock — let the page scroll normally. */
+  .reader-page {
+    min-height: 0;
+    height: auto;
+  }
+  .panes {
+    grid-template-columns: 1fr;
+    flex: 0 0 auto;
+  }
+  .pane {
+    overflow: visible;
+    min-height: 260px;
+  }
+  .textarea, .reading, .target {
+    overflow-y: visible;
+  }
+  .bottom {
+    grid-template-columns: 1fr;
+    flex: 0 0 auto;
+  }
+  .word-panel, .usage-panel {
+    overflow-y: visible;
+    min-height: 180px;
+  }
   .page-head { flex-direction: column; align-items: stretch; }
   .dir-toggle { align-self: flex-start; }
 }
