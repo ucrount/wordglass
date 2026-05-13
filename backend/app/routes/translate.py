@@ -1,10 +1,4 @@
-"""Free-form paragraph translation, AI-backed.
-
-Supports both English -> Chinese (default) and Chinese -> English via the
-`target_lang` field. /api/translate is the legacy non-streaming endpoint;
-/api/translate/stream is the SSE endpoint used by Reader v3 for perceived
-speed.
-"""
+"""Free-form paragraph translation, AI-backed."""
 
 from __future__ import annotations
 
@@ -16,13 +10,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ..auth import verify_token
+from ..auth import current_user
 from ..db import get_db
 from ..log import log_event, new_request_id, now_ms
+from ..models import User
 from ..providers import ProviderError, build_provider
 from ..settings_store import get_settings, is_configured
 
-router = APIRouter(prefix="/api/translate", tags=["translate"], dependencies=[Depends(verify_token)])
+router = APIRouter(prefix="/api/translate", tags=["translate"], dependencies=[Depends(current_user)])
 
 
 class TranslateIn(BaseModel):
@@ -52,8 +47,12 @@ def _system_for(target_lang: str) -> str:
 
 
 @router.post("", response_model=TranslateOut)
-async def translate(payload: TranslateIn, db: Session = Depends(get_db)):
-    row = get_settings(db)
+async def translate(
+    payload: TranslateIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    row = get_settings(db, user.id)
     if not is_configured(row):
         raise HTTPException(
             status_code=502,
@@ -68,8 +67,12 @@ async def translate(payload: TranslateIn, db: Session = Depends(get_db)):
 
 
 @router.post("/stream")
-async def translate_stream(payload: TranslateIn, db: Session = Depends(get_db)):
-    row = get_settings(db)
+async def translate_stream(
+    payload: TranslateIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    row = get_settings(db, user.id)
     if not is_configured(row):
         raise HTTPException(
             status_code=502,
@@ -117,7 +120,7 @@ async def translate_stream(payload: TranslateIn, db: Session = Depends(get_db)):
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # tell nginx not to buffer
+            "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
         },
     )

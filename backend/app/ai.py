@@ -117,7 +117,7 @@ def lookup_local(word: str) -> dict[str, Any] | None:
     }
 
 
-async def fetch_word_payload(word: str, db: Session) -> dict[str, Any]:
+async def fetch_word_payload(word: str, db: Session, user_id: int) -> dict[str, Any]:
     """ECDICT-miss fallback. Calls AI for the full payload — slow, but
     unavoidable for words the offline dictionary doesn't know. Raises
     RuntimeError if AI isn't configured.
@@ -126,7 +126,7 @@ async def fetch_word_payload(word: str, db: Session) -> dict[str, Any]:
     if not text:
         raise RuntimeError("空查询")
 
-    settings_row = get_settings(db)
+    settings_row = get_settings(db, user_id)
     if not is_configured(settings_row):
         raise RuntimeError(
             "本地词典里找不到这个词，而 AI 还没配置。打开右上角 ⚙ 设置一个 AI provider 再试。"
@@ -134,11 +134,11 @@ async def fetch_word_payload(word: str, db: Session) -> dict[str, Any]:
     return await _full_ai_payload(text, settings_row)
 
 
-async def categorize_word(word: str, db: Session) -> str:
+async def categorize_word(word: str, db: Session, user_id: int) -> str:
     """Async AI categorisation for one word — meant for BackgroundTasks.
     Silently returns "" if AI isn't configured or the call fails.
     """
-    settings_row = get_settings(db)
+    settings_row = get_settings(db, user_id)
     if not is_configured(settings_row):
         return ""
     try:
@@ -147,11 +147,11 @@ async def categorize_word(word: str, db: Session) -> str:
         return ""
 
 
-async def generate_examples(word: str, translation: str, db: Session) -> list[dict[str, str]]:
+async def generate_examples(word: str, translation: str, db: Session, user_id: int) -> list[dict[str, str]]:
     """Ask AI for 5 example sentences for a word we already have basic data on.
     Used when Tatoeba came up empty.
     """
-    settings_row = get_settings(db)
+    settings_row = get_settings(db, user_id)
     if not is_configured(settings_row):
         return []
 
@@ -242,7 +242,7 @@ async def _categorize_one(word: str, settings_row: Any) -> str:
 
 
 async def categorize_words_batch(
-    words: list[str], db: Session
+    words: list[str], db: Session, user_id: int
 ) -> dict[str, str]:
     """Classify a batch of words into categories via one AI call.
     Returns {word: category} for words that were successfully classified.
@@ -250,7 +250,7 @@ async def categorize_words_batch(
     if not words:
         return {}
 
-    row = get_settings(db)
+    row = get_settings(db, user_id)
     if not is_configured(row):
         raise RuntimeError("AI not configured")
 
