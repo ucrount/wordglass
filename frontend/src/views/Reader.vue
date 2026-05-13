@@ -193,7 +193,6 @@ async function doTranslate() {
   if (translateAbort) translateAbort.abort();
   translateAbort = new AbortController();
 
-  const textareaFocused = document.activeElement === textareaRef.value;
   const targetLang = direction.value === "en-to-zh" ? "zh" : "en";
   loading.value = true;
   error.value = "";
@@ -216,7 +215,12 @@ async function doTranslate() {
   loading.value = false;
   if (!error.value && accumulated) {
     lastTranslatedText = text;
-    if (sourceText.value.trim() === text && !textareaFocused) {
+    // If the source hasn't been touched during streaming, switch to read mode
+    // and blur the textarea so words become clickable. Previously we kept the
+    // textarea focused when it had focus at translate-start (e.g. just after
+    // paste), which left the user stuck in edit mode until they reloaded.
+    if (sourceText.value.trim() === text) {
+      textareaRef.value?.blur();
       mode.value = "read";
     }
   }

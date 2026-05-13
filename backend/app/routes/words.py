@@ -16,6 +16,7 @@ from ..ai import (
 )
 from ..auth import verify_token
 from ..db import SessionLocal, get_db
+from ..log import log_event, new_request_id, now_ms
 from ..models import Example, Word
 from ..offline_dict import has_ecdict, has_tatoeba, lookup_ecdict
 from ..providers import ProviderError, build_provider
@@ -267,15 +268,40 @@ async def word_usage_stream(payload: UsageIn, db: Session = Depends(get_db)):
             detail="AI 未配置，无法生成用法解释。在右上角 ⚙ 设置中配一个 AI provider 再试。",
         )
 
+    rid = new_request_id()
+    t0 = now_ms()
+    log_event(
+        "usage.start",
+        rid=rid,
+        word=payload.text.strip(),
+        provider=row.provider_type,
+        model=row.model,
+    )
+
     async def gen():
+        chunks = 0
+        first_chunk_ms = None
         try:
             provider = build_provider(row.provider_type, row.base_url, row.api_key, row.model)
+            log_event("usage.provider_built", rid=rid, ms=round(now_ms() - t0, 1))
             async for chunk in provider.chat_stream(
                 USAGE_SYSTEM, payload.text.strip(), max_tokens=500
             ):
+                if first_chunk_ms is None:
+                    first_chunk_ms = round(now_ms() - t0, 1)
+                    log_event("usage.first_chunk", rid=rid, ms=first_chunk_ms, len=len(chunk))
+                chunks += 1
                 yield f"data: {json.dumps({'delta': chunk}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
+            log_event(
+                "usage.done",
+                rid=rid,
+                chunks=chunks,
+                total_ms=round(now_ms() - t0, 1),
+                first_chunk_ms=first_chunk_ms,
+            )
         except ProviderError as e:
+            log_event("usage.error", rid=rid, error=str(e)[:200], ms=round(now_ms() - t0, 1))
             yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(

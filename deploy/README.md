@@ -234,6 +234,23 @@ curl http://127.0.0.1:8000/api/words/offline-status
 # {"ecdict": true, "tatoeba": false}
 ```
 
+**Reader 流式诊断**：v3 起所有流式接口都打结构化日志。打开页面用 reader 时，另一终端跑：
+
+```bash
+sudo journalctl -u wordglass-api -f | grep -E "translate\.|usage\."
+```
+
+会看到每次流式请求的时序：
+
+```
+{"ts": 1715692812.4, "event": "translate.start", "rid": "a3f12b9c", "target_lang": "zh", "text_len": 187, "provider": "openai", "model": "deepseek-chat"}
+{"ts": 1715692812.5, "event": "translate.provider_built", "rid": "a3f12b9c", "ms": 12.3}
+{"ts": 1715692813.1, "event": "translate.first_chunk", "rid": "a3f12b9c", "ms": 678.4, "len": 5}
+{"ts": 1715692815.7, "event": "translate.done", "rid": "a3f12b9c", "chunks": 142, "total_ms": 3289.7, "first_chunk_ms": 678.4}
+```
+
+`first_chunk_ms` 是看 AI 服务有多快出第一个字（首 token 延迟），`total_ms - first_chunk_ms` 是 AI 生成完整内容的时间。`usage.*` 同样有这套字段。如果第一个 chunk 要好几秒，那慢的是 AI provider 端，换个 base_url / model 就能改善。
+
 ---
 
 ## 备份数据

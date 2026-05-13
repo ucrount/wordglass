@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import verify_token
 from ..db import get_db
+from ..log import log_event, new_request_id, now_ms
 from ..providers import ProviderError, build_provider
 from ..settings_store import get_settings, is_configured
 
@@ -76,13 +77,39 @@ async def translate_stream(payload: TranslateIn, db: Session = Depends(get_db)):
         )
     system = _system_for(payload.target_lang)
 
+    rid = new_request_id()
+    t0 = now_ms()
+    log_event(
+        "translate.start",
+        rid=rid,
+        target_lang=payload.target_lang,
+        text_len=len(payload.text),
+        provider=row.provider_type,
+        model=row.model,
+    )
+
     async def gen():
+        chunks = 0
+        first_chunk_ms = None
         try:
             provider = build_provider(row.provider_type, row.base_url, row.api_key, row.model)
+            log_event("translate.provider_built", rid=rid, ms=round(now_ms() - t0, 1))
             async for chunk in provider.chat_stream(system, payload.text, max_tokens=2000):
+                if first_chunk_ms is None:
+                    first_chunk_ms = round(now_ms() - t0, 1)
+                    log_event("translate.first_chunk", rid=rid, ms=first_chunk_ms, len=len(chunk))
+                chunks += 1
                 yield f"data: {json.dumps({'delta': chunk}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
+            log_event(
+                "translate.done",
+                rid=rid,
+                chunks=chunks,
+                total_ms=round(now_ms() - t0, 1),
+                first_chunk_ms=first_chunk_ms,
+            )
         except ProviderError as e:
+            log_event("translate.error", rid=rid, error=str(e)[:200], ms=round(now_ms() - t0, 1))
             yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
