@@ -2,8 +2,11 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { api, type WordPreview } from "../api";
 
-// ─── Persisted text ────────────────────────────────────────────────────────
+// ─── Persisted text + direction ────────────────────────────────────────────
+type Direction = "en-to-zh" | "zh-to-en";
+
 const STORAGE_KEY = "wordglass.reader";
+const STORAGE_KEY_DIR = "wordglass.reader.dir";
 
 function loadStored(): { en: string; zh: string } {
   try {
@@ -16,9 +19,15 @@ function loadStored(): { en: string; zh: string } {
   }
 }
 
+function loadDir(): Direction {
+  const v = localStorage.getItem(STORAGE_KEY_DIR);
+  return v === "zh-to-en" ? "zh-to-en" : "en-to-zh";
+}
+
 const stored = loadStored();
 const english = ref(stored.en);
 const chinese = ref(stored.zh);
+const direction = ref<Direction>(loadDir());
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
 
 watch([english, chinese], ([en, zh]) => {
@@ -27,18 +36,66 @@ watch([english, chinese], ([en, zh]) => {
   } catch { /* quota — ignore */ }
 });
 
-// ─── State ─────────────────────────────────────────────────────────────────
+// ─── Direction-aware source / target ───────────────────────────────────────
+const sourceText = computed({
+  get: () => (direction.value === "en-to-zh" ? english.value : chinese.value),
+  set: (v: string) => {
+    if (direction.value === "en-to-zh") english.value = v;
+    else chinese.value = v;
+  },
+});
+
+const targetText = computed(() =>
+  direction.value === "en-to-zh" ? chinese.value : english.value
+);
+
+function clearTarget() {
+  if (direction.value === "en-to-zh") chinese.value = "";
+  else english.value = "";
+}
+
+function setTarget(v: string) {
+  if (direction.value === "en-to-zh") chinese.value = v;
+  else english.value = v;
+}
+
+const sourceLabel = computed(() =>
+  direction.value === "en-to-zh" ? "原文（English）" : "原文（中文）"
+);
+const targetLabel = computed(() =>
+  direction.value === "en-to-zh" ? "译文（中文）" : "译文（English）"
+);
+const sourcePlaceholder = computed(() =>
+  direction.value === "en-to-zh"
+    ? "把英文粘进来——文章、新闻、邮件、字幕都行（最长 5000 字符）…"
+    : "把中文粘进来——文章、邮件、想翻成英文的句子（最长 5000 字符）…"
+);
+
+// ─── Mode + selected word ──────────────────────────────────────────────────
 type Mode = "edit" | "read";
-const mode = ref<Mode>(chinese.value ? "read" : "edit");
+const mode = ref<Mode>(sourceText.value ? "read" : "edit");
 const loading = ref(false);
 const error = ref("");
 const addedCount = ref(0);
 
-// Auto-translate debounce. Fires 1200ms after the last keystroke or right
-// away on paste — so the user never thinks about a "translate" button.
+interface SelectedWord {
+  text: string;
+  loading: boolean;
+  found: boolean;
+  phonetic: string;
+  pos: string;
+  translation: string;
+  alreadySaved: boolean;
+  adding: boolean;
+  addError: string;
+}
+const selected = ref<SelectedWord | null>(null);
+const readContainer = ref<HTMLElement | null>(null);
+
+// ─── Auto-translate debounce ───────────────────────────────────────────────
 const DEBOUNCE_MS = 1200;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-let lastTranslatedText = stored.en;
+let lastTranslatedText = sourceText.value;
 
 function cancelDebounce() {
   if (debounceTimer) {
@@ -49,9 +106,9 @@ function cancelDebounce() {
 
 function scheduleTranslate(immediate = false) {
   cancelDebounce();
-  const text = english.value.trim();
+  const text = sourceText.value.trim();
   if (!text) {
-    chinese.value = "";
+    clearTarget();
     mode.value = "edit";
     lastTranslatedText = "";
     return;
@@ -64,32 +121,20 @@ function scheduleTranslate(immediate = false) {
   }
 }
 
-watch(english, () => scheduleTranslate(false));
+watch(sourceText, () => scheduleTranslate(false));
+watch(direction, (d) => {
+  localStorage.setItem(STORAGE_KEY_DIR, d);
+});
 
 function onPaste() {
   setTimeout(() => scheduleTranslate(true), 0);
 }
 
-interface Popup {
-  word: string;
-  loading: boolean;
-  found: boolean;
-  phonetic: string;
-  pos: string;
-  translation: string;
-  alreadySaved: boolean;
-  adding: boolean;
-  addError: string;
-  x: number;
-  y: number;
-  flipAbove: boolean;
-}
-const popup = ref<Popup | null>(null);
-const readContainer = ref<HTMLElement | null>(null);
-
+// ─── Token splitting (only used in en→zh mode) ─────────────────────────────
 type Token = { kind: "word" | "gap"; text: string };
 const tokens = computed<Token[]>(() => {
   const out: Token[] = [];
+  if (direction.value !== "en-to-zh") return out;
   const re = /[A-Za-z][A-Za-z'-]*/g;
   let last = 0;
   const text = english.value;
@@ -102,33 +147,49 @@ const tokens = computed<Token[]>(() => {
   return out;
 });
 
-const wordCount = computed(
-  () => (english.value.match(/[A-Za-z][A-Za-z'-]*/g) || []).length
-);
-const charCount = computed(() => english.value.length);
+const wordCount = computed(() => {
+  if (direction.value === "en-to-zh") {
+    return (english.value.match(/[A-Za-z][A-Za-z'-]*/g) || []).length;
+  }
+  return (chinese.value.match(/[一-鿿]/g) || []).length;
+});
+const charCount = computed(() => sourceText.value.length);
+
+// ─── Direction toggle ──────────────────────────────────────────────────────
+function setDirection(d: Direction) {
+  if (d === direction.value) return;
+  cancelDebounce();
+  direction.value = d;
+  english.value = "";
+  chinese.value = "";
+  selected.value = null;
+  mode.value = "edit";
+  lastTranslatedText = "";
+  error.value = "";
+  nextTick(() => textareaRef.value?.focus());
+}
 
 // ─── Actions ───────────────────────────────────────────────────────────────
 async function doTranslate() {
   cancelDebounce();
-  const text = english.value.trim();
+  const text = sourceText.value.trim();
   if (!text || loading.value) return;
-  // If the textarea is focused, the user is actively typing — translate but
-  // DON'T snap to read mode (it'd lose focus mid-edit).
   const textareaFocused = document.activeElement === textareaRef.value;
+  const targetLang = direction.value === "en-to-zh" ? "zh" : "en";
   loading.value = true;
   error.value = "";
   try {
-    const res = await api.translateText(text);
-    chinese.value = res.translation;
+    const res = await api.translateText(text, targetLang);
+    setTarget(res.translation);
     lastTranslatedText = text;
-    if (english.value.trim() === text && !textareaFocused) {
+    if (sourceText.value.trim() === text && !textareaFocused) {
       mode.value = "read";
     }
   } catch (e: any) {
     error.value = e.message || "翻译失败";
   } finally {
     loading.value = false;
-    if (english.value.trim() && english.value.trim() !== lastTranslatedText.trim()) {
+    if (sourceText.value.trim() && sourceText.value.trim() !== lastTranslatedText.trim()) {
       scheduleTranslate(false);
     }
   }
@@ -136,10 +197,8 @@ async function doTranslate() {
 
 function enterEditMode() {
   mode.value = "edit";
-  popup.value = null;
   nextTick(() => {
     textareaRef.value?.focus();
-    // Put cursor at the end so the user can keep typing naturally
     if (textareaRef.value) {
       const len = textareaRef.value.value.length;
       textareaRef.value.setSelectionRange(len, len);
@@ -148,104 +207,78 @@ function enterEditMode() {
 }
 
 function pasteExample() {
-  english.value = `The morning light slipped through the cracked blinds, painting thin stripes across the wooden floor. Lena sat by the window, cradling a cup of tea, watching the city wake up. Somewhere in the distance, a tram bell rang. She thought about all the things she had meant to do this week, and how a quiet Saturday could rearrange her priorities entirely.`;
+  if (direction.value === "en-to-zh") {
+    english.value = `The morning light slipped through the cracked blinds, painting thin stripes across the wooden floor. Lena sat by the window, cradling a cup of tea, watching the city wake up. Somewhere in the distance, a tram bell rang. She thought about all the things she had meant to do this week, and how a quiet Saturday could rearrange her priorities entirely.`;
+  } else {
+    chinese.value = `清晨的阳光从百叶窗的缝隙里溜进来，在木地板上画出细细的条纹。莉娜坐在窗边，捧着一杯茶，看着城市慢慢醒来。远处某个地方，有轨电车的铃声响起。她想着这周本来要做的所有事，又想到一个安静的周六，可以把她的优先级完全重新排列一遍。`;
+  }
   mode.value = "edit";
   scheduleTranslate(true);
 }
 
-// ─── Popup ─────────────────────────────────────────────────────────────────
+// ─── Word selection (en→zh only) ───────────────────────────────────────────
 async function onWordClick(event: MouseEvent, word: string) {
+  if (direction.value !== "en-to-zh") return;
   event.stopPropagation();
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  const containerRect = readContainer.value?.getBoundingClientRect();
-  if (!containerRect) return;
-  const POPUP_WIDTH = 300;
-  const POPUP_HEIGHT_ESTIMATE = 180;
-
-  const spaceBelow = window.innerHeight - rect.bottom;
-  const flipAbove = spaceBelow < POPUP_HEIGHT_ESTIMATE + 20;
-  let x = rect.left - containerRect.left;
-  const maxX = containerRect.width - POPUP_WIDTH - 8;
-  if (x > maxX) x = Math.max(8, maxX);
-  const y = flipAbove
-    ? rect.top - containerRect.top - 8
-    : rect.bottom - containerRect.top + 8;
-
-  popup.value = {
-    word,
-    loading: true,
-    found: false,
-    phonetic: "",
-    pos: "",
-    translation: "",
-    alreadySaved: false,
-    adding: false,
-    addError: "",
-    x,
-    y,
-    flipAbove,
+  selected.value = {
+    text: word, loading: true, found: false,
+    phonetic: "", pos: "", translation: "",
+    alreadySaved: false, adding: false, addError: "",
   };
-
   try {
     const data: WordPreview = await api.previewWord(word);
-    if (!popup.value || popup.value.word !== word) return;
+    if (!selected.value || selected.value.text !== word) return;
     if (data.found) {
-      popup.value = {
-        ...popup.value,
-        loading: false,
-        found: true,
-        phonetic: data.phonetic,
-        pos: data.pos,
-        translation: data.translation,
-        alreadySaved: data.already_saved,
+      selected.value = {
+        ...selected.value, loading: false, found: true,
+        phonetic: data.phonetic, pos: data.pos,
+        translation: data.translation, alreadySaved: data.already_saved,
       };
     } else {
-      popup.value = { ...popup.value, loading: false, found: false };
+      selected.value = { ...selected.value, loading: false, found: false };
     }
   } catch {
-    if (popup.value) popup.value = { ...popup.value, loading: false, found: false };
+    if (selected.value) selected.value = { ...selected.value, loading: false, found: false };
   }
 }
 
-async function addWord() {
-  if (!popup.value || popup.value.adding) return;
-  popup.value.adding = true;
-  popup.value.addError = "";
+async function addSelectedWord() {
+  if (!selected.value || selected.value.adding) return;
+  selected.value.adding = true;
+  selected.value.addError = "";
   try {
-    await api.addWord(popup.value.word);
-    if (popup.value) {
-      popup.value = { ...popup.value, adding: false, alreadySaved: true };
+    await api.addWord(selected.value.text);
+    if (selected.value) {
+      selected.value = { ...selected.value, adding: false, alreadySaved: true };
       addedCount.value++;
     }
   } catch (e: any) {
-    if (popup.value) {
-      popup.value = { ...popup.value, adding: false, addError: e.message || "添加失败" };
+    if (selected.value) {
+      selected.value = { ...selected.value, adding: false, addError: e.message || "添加失败" };
     }
   }
 }
 
-function closePopup() {
-  popup.value = null;
+function closeSelected() {
+  selected.value = null;
 }
 
 function onKey(e: KeyboardEvent) {
-  if (e.key === "Escape") closePopup();
+  if (e.key === "Escape" && selected.value) closeSelected();
 }
 
 onMounted(() => {
   document.addEventListener("keydown", onKey);
-  document.addEventListener("click", closePopup);
 });
 onBeforeUnmount(() => {
   cancelDebounce();
   document.removeEventListener("keydown", onKey);
-  document.removeEventListener("click", closePopup);
 });
 </script>
 
 <template>
   <div class="reader-page">
-    <!-- Top progress bar — shows during translation, very visible -->
+    <!-- Top progress bar — shows during translation -->
     <div v-if="loading" class="top-progress" aria-hidden="true" />
 
     <!-- Header -->
@@ -261,11 +294,26 @@ onBeforeUnmount(() => {
           </span>
         </h1>
         <p class="muted small">
-          粘段英文，自动翻译；翻译完成后点任意单词加入单词库
+          粘段文字，自动翻译；翻译完成后点任意英文单词加入单词库
           <span v-if="addedCount > 0" class="status-chip saved">
             本次已加入 {{ addedCount }} 个 ✓
           </span>
         </p>
+      </div>
+
+      <div class="dir-toggle" role="tablist" aria-label="翻译方向">
+        <button
+          role="tab"
+          :aria-selected="direction === 'en-to-zh'"
+          :class="{ active: direction === 'en-to-zh' }"
+          @click="setDirection('en-to-zh')"
+        >英 → 中</button>
+        <button
+          role="tab"
+          :aria-selected="direction === 'zh-to-en'"
+          :class="{ active: direction === 'zh-to-en' }"
+          @click="setDirection('zh-to-en')"
+        >中 → 英</button>
       </div>
     </header>
 
@@ -273,28 +321,30 @@ onBeforeUnmount(() => {
 
     <!-- Two panes -->
     <div class="panes">
-      <!-- Left: original text -->
+      <!-- Source pane -->
       <section class="pane glass">
         <div class="pane-head">
-          <span class="pane-label">原文（English）</span>
+          <span class="pane-label">{{ sourceLabel }}</span>
           <span class="pane-meta tertiary">
-            <template v-if="wordCount">{{ wordCount }} 词 · </template>{{ charCount }} 字
-            <span v-if="mode === 'read'" class="hint-tag">点词加入 · 点空白处编辑</span>
+            <template v-if="wordCount">{{ wordCount }} {{ direction === 'en-to-zh' ? '词' : '字' }} · </template>{{ charCount }} 字符
+            <span v-if="mode === 'read' && direction === 'en-to-zh'" class="hint-tag">点词加入 · 点空白处编辑</span>
+            <span v-else-if="mode === 'read'" class="hint-tag">点任意位置编辑</span>
           </span>
         </div>
 
         <textarea
           v-if="mode === 'edit'"
           ref="textareaRef"
-          v-model="english"
+          v-model="sourceText"
           class="textarea"
-          placeholder="把英文粘进来——文章、新闻、邮件、字幕都行（最长 5000 字符）…"
+          :placeholder="sourcePlaceholder"
           spellcheck="false"
           @paste="onPaste"
         />
 
+        <!-- en→zh: clickable word reading -->
         <div
-          v-else
+          v-else-if="direction === 'en-to-zh'"
           ref="readContainer"
           class="reading"
           @click="enterEditMode"
@@ -303,61 +353,29 @@ onBeforeUnmount(() => {
             <span
               v-if="t.kind === 'word'"
               class="w"
-              :class="{ active: popup?.word === t.text }"
+              :class="{ active: selected?.text === t.text }"
               @click.stop="onWordClick($event, t.text)"
             >{{ t.text }}</span>
             <span v-else class="gap">{{ t.text }}</span>
           </template>
-
-          <!-- Word popup -->
-          <div
-            v-if="popup"
-            class="popup glass-strong"
-            :class="{ above: popup.flipAbove }"
-            :style="{ left: popup.x + 'px', top: popup.y + 'px' }"
-            @click.stop
-          >
-            <div class="popup-head">
-              <span class="popup-word">{{ popup.word }}</span>
-              <button class="popup-close" @click="closePopup" title="关闭 (Esc)">×</button>
-            </div>
-
-            <div v-if="popup.loading" class="popup-loading muted">查询中…</div>
-            <template v-else-if="popup.found">
-              <div class="popup-meta">
-                <span v-if="popup.phonetic" class="popup-phonetic">{{ popup.phonetic }}</span>
-                <span v-if="popup.pos" class="popup-pos">{{ popup.pos }}</span>
-              </div>
-              <div class="popup-trans">{{ popup.translation }}</div>
-            </template>
-            <div v-else class="popup-empty muted small">
-              本地词典未收录这个词。可以点击加入单词库，配置了 AI 的话会自动兜底翻译。
-            </div>
-
-            <div class="popup-actions">
-              <span v-if="popup.alreadySaved" class="popup-saved">✓ 已在单词库</span>
-              <button
-                v-else
-                class="btn btn-primary tiny"
-                :disabled="popup.adding"
-                @click="addWord"
-              >
-                {{ popup.adding ? "添加中…" : "+ 加入单词库" }}
-              </button>
-            </div>
-            <div v-if="popup.addError" class="popup-error">{{ popup.addError }}</div>
-          </div>
         </div>
+
+        <!-- zh→en: plain text reading, no spans -->
+        <div
+          v-else
+          class="reading reading-plain"
+          @click="enterEditMode"
+        >{{ chinese }}</div>
       </section>
 
-      <!-- Right: translation -->
+      <!-- Target pane -->
       <section class="pane glass">
         <div class="pane-head">
-          <span class="pane-label">译文（中文）</span>
-          <span v-if="chinese" class="pane-meta tertiary">{{ chinese.length }} 字</span>
+          <span class="pane-label">{{ targetLabel }}</span>
+          <span v-if="targetText" class="pane-meta tertiary">{{ targetText.length }} 字符</span>
         </div>
 
-        <div v-if="loading && !chinese" class="skeleton">
+        <div v-if="loading && !targetText" class="skeleton">
           <div class="skeleton-line" style="width: 92%"></div>
           <div class="skeleton-line" style="width: 86%"></div>
           <div class="skeleton-line" style="width: 78%"></div>
@@ -365,18 +383,74 @@ onBeforeUnmount(() => {
           <div class="skeleton-line" style="width: 64%"></div>
         </div>
 
-        <div v-else-if="chinese" class="chinese" :class="{ stale: loading }">{{ chinese }}</div>
+        <div v-else-if="targetText" class="target" :class="{ stale: loading }">{{ targetText }}</div>
 
         <div v-else class="empty">
           <div class="empty-emoji">🌐</div>
-          <p class="muted">粘段英文，几秒后这里会出现中文</p>
-          <p v-if="!english" class="tertiary small">
+          <p class="muted">
+            {{ direction === 'en-to-zh' ? '粘段英文，几秒后这里会出现中文' : '粘段中文，几秒后这里会出现英文' }}
+          </p>
+          <p v-if="!sourceText" class="tertiary small">
             或者
             <button class="link-btn" @click="pasteExample">塞个示例进来</button>
           </p>
         </div>
       </section>
     </div>
+
+    <!-- Bottom word panel — en→zh only -->
+    <section v-if="direction === 'en-to-zh'" class="word-panel glass">
+      <div v-if="!selected" class="wp-empty tertiary">
+        <span class="wp-hint-emoji">🔎</span>
+        点任意英文单词查看读法和释义
+      </div>
+
+      <div v-else-if="selected.loading" class="wp-loading muted">
+        查询「{{ selected.text }}」…
+      </div>
+
+      <div v-else-if="selected.found" class="wp-detail">
+        <div class="wp-head">
+          <span class="wp-word">{{ selected.text }}</span>
+          <span v-if="selected.phonetic" class="wp-phon">{{ selected.phonetic }}</span>
+          <span v-if="selected.pos" class="wp-pos">{{ selected.pos }}</span>
+        </div>
+        <div class="wp-trans">{{ selected.translation }}</div>
+        <div class="wp-actions">
+          <span v-if="selected.alreadySaved" class="wp-saved">✓ 已在单词库</span>
+          <button
+            v-else
+            class="btn btn-primary"
+            :disabled="selected.adding"
+            @click="addSelectedWord"
+          >
+            {{ selected.adding ? "添加中…" : "+ 加入单词库" }}
+          </button>
+          <button class="btn btn-ghost wp-close-btn" @click="closeSelected">关闭</button>
+        </div>
+        <div v-if="selected.addError" class="wp-error">{{ selected.addError }}</div>
+      </div>
+
+      <div v-else class="wp-not-found">
+        <div class="wp-head">
+          <span class="wp-word">{{ selected.text }}</span>
+        </div>
+        <div class="muted small">
+          本地词典没收录这个词。配置了 AI 的话可以直接「加入单词库」让 AI 兜底翻译。
+        </div>
+        <div class="wp-actions">
+          <button
+            class="btn btn-primary"
+            :disabled="selected.adding"
+            @click="addSelectedWord"
+          >
+            {{ selected.adding ? "添加中…" : "+ 加入单词库" }}
+          </button>
+          <button class="btn btn-ghost wp-close-btn" @click="closeSelected">关闭</button>
+        </div>
+        <div v-if="selected.addError" class="wp-error">{{ selected.addError }}</div>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -388,7 +462,7 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
-/* ─── Top progress bar (very prominent) ──────────────── */
+/* ─── Top progress bar ──────────────────────────────────── */
 .top-progress {
   position: fixed;
   top: 0;
@@ -445,7 +519,6 @@ onBeforeUnmount(() => {
 }
 .emoji { font-size: 22px; }
 
-/* ─── Loading banner — prominent inline beside title ──── */
 .loading-banner {
   display: inline-flex;
   align-items: center;
@@ -500,6 +573,42 @@ onBeforeUnmount(() => {
   color: var(--brand);
 }
 
+/* ─── Direction toggle ──────────────────────────── */
+.dir-toggle {
+  display: inline-flex;
+  align-self: center;
+  gap: 4px;
+  padding: 4px;
+  background: var(--glass-bg-dim);
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+
+.dir-toggle button {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 7px 18px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.dir-toggle button:hover:not(.active) {
+  color: var(--text-primary);
+}
+
+.dir-toggle button.active {
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+}
+
 .error {
   padding: 10px 16px;
   border-radius: 12px;
@@ -521,7 +630,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-  min-height: 520px;
+  min-height: 380px;
 }
 
 .pane-head {
@@ -574,8 +683,7 @@ onBeforeUnmount(() => {
   font-size: 15px;
   line-height: 1.7;
   color: var(--text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-               "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-family: var(--font-ui);
 }
 
 .textarea::placeholder {
@@ -609,7 +717,7 @@ onBeforeUnmount(() => {
 }
 .w.active {
   background: var(--brand);
-  color: #fff;
+  color: var(--brand-strong-text);
 }
 
 .gap {
@@ -617,126 +725,8 @@ onBeforeUnmount(() => {
   user-select: text;
 }
 
-/* ─── Popup ──────────────────────────────────────── */
-.popup {
-  position: absolute;
-  z-index: 30;
-  width: 300px;
-  padding: 14px 16px;
-  border-radius: 14px;
-  box-shadow: var(--glass-shadow-lg);
-  font-size: 13px;
-  line-height: 1.5;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  animation: pop-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.popup.above {
-  transform: translateY(-100%);
-}
-
-@keyframes pop-in {
-  from { opacity: 0; transform: translateY(-4px) scale(0.96); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-}
-.popup.above {
-  animation-name: pop-in-above;
-}
-@keyframes pop-in-above {
-  from { opacity: 0; transform: translateY(calc(-100% - 4px)) scale(0.96); }
-  to   { opacity: 1; transform: translateY(-100%) scale(1); }
-}
-
-.popup-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.popup-word {
-  font-family: var(--font-serif);
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-.popup-close {
-  border: none;
-  background: transparent;
-  font-size: 18px;
-  cursor: pointer;
-  color: var(--text-tertiary);
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  line-height: 1;
-}
-.popup-close:hover { background: var(--glass-bg-dim); color: var(--text-primary); }
-
-.popup-meta {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  align-items: center;
-}
-
-.popup-phonetic {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  color: var(--text-tertiary);
-}
-
-.popup-pos {
-  font-family: var(--font-serif);
-  font-style: italic;
-  background: var(--brand-soft);
-  padding: 2px 8px;
-  border-radius: 999px;
-  color: var(--brand);
-}
-
-.popup-trans {
-  font-size: 14px;
-  color: var(--accent);
-  font-weight: 500;
-  line-height: 1.55;
-}
-
-.popup-empty { padding: 2px 0; }
-.popup-loading {
-  padding: 12px 0;
-  text-align: center;
-  font-size: 12px;
-}
-
-.popup-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--hairline);
-}
-
-.popup-saved {
-  font-size: 12px;
-  color: var(--brand);
-  font-weight: 600;
-}
-
-.popup-error {
-  font-size: 12px;
-  color: var(--danger);
-}
-
-.btn.tiny {
-  padding: 5px 12px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-/* ─── Right pane: translation / skeleton / empty ──── */
-.chinese {
+/* ─── Target pane content ────────────────────────── */
+.target {
   flex: 1;
   padding: 4px 2px;
   font-size: 16px;
@@ -748,7 +738,7 @@ onBeforeUnmount(() => {
   transition: opacity 200ms ease;
 }
 
-.chinese.stale {
+.target.stale {
   opacity: 0.45;
 }
 
@@ -813,10 +803,111 @@ onBeforeUnmount(() => {
 }
 .link-btn:hover { text-decoration-color: var(--brand); }
 
+/* ─── Bottom word panel ──────────────────────────── */
+.word-panel {
+  padding: 14px 20px;
+  border-left: 3px solid var(--brand);
+  min-height: 76px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+}
+
+.wp-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  padding: 6px 0;
+}
+.wp-hint-emoji { font-size: 18px; opacity: 0.7; }
+
+.wp-loading {
+  padding: 8px 0;
+  font-size: 13px;
+}
+
+.wp-detail, .wp-not-found {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wp-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.wp-word {
+  font-family: var(--font-serif);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.wp-phon {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.wp-pos {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.wp-trans {
+  font-size: 15px;
+  color: var(--accent);
+  font-weight: 500;
+  line-height: 1.55;
+  word-wrap: break-word;
+}
+
+.wp-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
+.wp-saved {
+  font-size: 13px;
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.wp-close-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
+.btn-primary {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.wp-error {
+  font-size: 12px;
+  color: var(--danger);
+}
+
 /* ─── Responsive ─────────────────────────────────── */
 @media (max-width: 1000px) {
   .panes { grid-template-columns: 1fr; }
-  .pane { min-height: 360px; }
+  .pane { min-height: 260px; }
   .page-head { flex-direction: column; align-items: stretch; }
+  .dir-toggle { align-self: flex-start; }
 }
 </style>
