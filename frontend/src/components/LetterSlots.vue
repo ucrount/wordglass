@@ -139,7 +139,7 @@ onUnmounted(() => {
   gap: 8px;
   justify-content: center;
   align-items: center;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
 }
 
 .slot {
@@ -149,11 +149,12 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  font-family: var(--font-serif);
   font-size: 28px;
   font-weight: 700;
-  border: 2px solid rgba(0, 0, 0, 0.12);
+  border: 2px solid var(--hairline-strong);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--glass-bg);
   color: var(--text-primary);
   text-transform: lowercase;
   transition: all 200ms ease;
@@ -161,9 +162,9 @@ onUnmounted(() => {
 }
 
 .slot.active {
-  border-color: var(--accent);
-  background: rgba(0, 122, 255, 0.1);
-  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.15);
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 15%, transparent);
 }
 
 .slot.active::after {
@@ -173,27 +174,27 @@ onUnmounted(() => {
   left: 25%;
   right: 25%;
   height: 2px;
-  background: var(--accent);
+  background: var(--brand);
   border-radius: 1px;
   animation: blink 1s ease-in-out infinite;
 }
 
 .slot.filled:not(.active) {
-  background: rgba(255, 255, 255, 0.9);
-  border-color: rgba(52, 199, 89, 0.4);
-  color: #186a2a;
+  background: var(--glass-bg-strong);
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
+  color: var(--success);
 }
 
 .slot.shake {
-  background: rgba(255, 59, 48, 0.15);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
   border-color: var(--danger);
   animation: shake 380ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
 }
 
 .slot.hint {
-  background: rgba(255, 149, 0, 0.18);
-  border-color: rgba(255, 149, 0, 0.4);
-  color: #b86700;
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  color: var(--warn);
 }
 
 .punct {
