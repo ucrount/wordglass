@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { api, type SettingsIn, type SettingsOut, type ProviderPreset } from "../api";
+import { useAuth } from "../composables/auth";
 
 import AiProviderPanel from "../components/settings/AiProviderPanel.vue";
 import TestPanel from "../components/settings/TestPanel.vue";
@@ -9,14 +10,17 @@ import AiLogsPanel from "../components/settings/AiLogsPanel.vue";
 import SysLogsPanel from "../components/settings/SysLogsPanel.vue";
 import OfflinePanel from "../components/settings/OfflinePanel.vue";
 import AboutPanel from "../components/settings/AboutPanel.vue";
+import AdminPanel from "../components/settings/AdminPanel.vue";
 
-type Tab = "ai" | "test" | "auth" | "log_ai" | "log_sys" | "offline" | "about";
+const { isAdmin } = useAuth();
+
+type Tab = "ai" | "test" | "auth" | "log_ai" | "log_sys" | "offline" | "about" | "admin";
 
 const STORAGE_KEY_TAB = "wordglass.settings.tab";
 
 function loadTab(): Tab {
   const v = localStorage.getItem(STORAGE_KEY_TAB) || "ai";
-  const valid: Tab[] = ["ai", "test", "auth", "log_ai", "log_sys", "offline", "about"];
+  const valid: Tab[] = ["ai", "test", "auth", "log_ai", "log_sys", "offline", "about", "admin"];
   return (valid.includes(v as Tab) ? v : "ai") as Tab;
 }
 
@@ -104,6 +108,10 @@ const tabs = computed(() => [
     { id: "log_ai" as const,  icon: "🤖", label: "AI 调用记录", badge: aiBadge.value },
     { id: "log_sys" as const, icon: "📋", label: "系统日志",    badge: sysBadge.value },
   ]},
+  ...(isAdmin.value ? [{
+    group: "管理",
+    items: [{ id: "admin" as const, icon: "👑", label: "管理员" }],
+  }] : []),
   { group: "关于", items: [
     { id: "offline" as const, icon: "📚", label: "离线数据" },
     { id: "about" as const,   icon: "ℹ",  label: "版本信息" },
@@ -169,6 +177,7 @@ const tabs = computed(() => [
             @count="(n) => sysBadge = n"
           />
           <OfflinePanel v-else-if="tab === 'offline'" />
+          <AdminPanel v-else-if="tab === 'admin'" />
           <AboutPanel v-else-if="tab === 'about'" />
         </Transition>
       </div>
