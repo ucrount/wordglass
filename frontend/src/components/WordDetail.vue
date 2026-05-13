@@ -235,8 +235,9 @@ onUnmounted(() => window.removeEventListener("keydown", handleKey));
 }
 
 .word-text {
+  font-family: var(--font-serif);
   font-size: clamp(32px, 4vw, 40px);
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--text-primary);
   line-height: 1.1;
@@ -253,7 +254,7 @@ onUnmounted(() => window.removeEventListener("keydown", handleKey));
   cursor: pointer;
   transition: background 200ms ease, transform 200ms ease;
 }
-.speaker:hover { transform: scale(1.08); background: rgba(139, 92, 246, 0.25); }
+.speaker:hover { transform: scale(1.08); background: color-mix(in srgb, var(--brand) 28%, transparent); }
 
 .meta {
   display: flex;
@@ -263,7 +264,7 @@ onUnmounted(() => window.removeEventListener("keydown", handleKey));
 }
 
 .phonetic {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 14px;
   color: var(--text-tertiary);
 }
@@ -271,11 +272,10 @@ onUnmounted(() => window.removeEventListener("keydown", handleKey));
 .chip {
   padding: 3px 10px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--glass-bg-dim);
   font-size: 12px;
   color: var(--text-secondary);
 }
-[data-theme="dark"] .chip { background: rgba(255, 255, 255, 0.08); }
 
 .category-chip {
   background: var(--brand-soft);
@@ -287,7 +287,7 @@ onUnmounted(() => window.removeEventListener("keydown", handleKey));
   margin-top: 4px;
   font-size: 18px;
   font-weight: 500;
-  color: var(--brand);
+  color: var(--accent);
   line-height: 1.45;
 }
 
@@ -308,8 +308,9 @@ onUnmounted(() => window.removeEventListener("keydown", handleKey));
 }
 
 .stat-num {
+  font-family: var(--font-serif);
   font-size: 22px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--text-primary);
 }
@@ -378,6 +379,8 @@ onUnmounted(() => window.removeEventListener("keydown", handleKey));
 .example-body { min-width: 0; flex: 1; }
 
 .example-en {
+  font-family: var(--font-serif);
+  font-style: italic;
   font-size: 15px;
   color: var(--text-primary);
   line-height: 1.55;
@@ -401,13 +404,13 @@ onUnmounted(() => window.removeEventListener("keydown", handleKey));
 }
 
 .btn-danger {
-  background: rgba(255, 59, 48, 0.14);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
   color: var(--danger);
-  border-color: rgba(255, 59, 48, 0.28);
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
 }
 
 .btn-danger:hover {
-  background: rgba(255, 59, 48, 0.22);
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
 }
 
 /* ─── Transitions ──────────────────────────────────── */
