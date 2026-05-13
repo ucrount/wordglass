@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { api, type WordPreview } from "../api";
 
 // ─── Persisted text ────────────────────────────────────────────────────────
@@ -19,6 +19,7 @@ function loadStored(): { en: string; zh: string } {
 const stored = loadStored();
 const english = ref(stored.en);
 const chinese = ref(stored.zh);
+const textareaRef = ref<HTMLTextAreaElement | null>(null);
 
 watch([english, chinese], ([en, zh]) => {
   try {
@@ -37,7 +38,7 @@ const addedCount = ref(0);
 // away on paste — so the user never thinks about a "translate" button.
 const DEBOUNCE_MS = 1200;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-let lastTranslatedText = stored.en; // skip re-translating identical text
+let lastTranslatedText = stored.en;
 
 function cancelDebounce() {
   if (debounceTimer) {
@@ -66,8 +67,6 @@ function scheduleTranslate(immediate = false) {
 watch(english, () => scheduleTranslate(false));
 
 function onPaste() {
-  // Browser writes pasted text into the textarea before the watch fires,
-  // so trigger immediate translation on the next tick.
   setTimeout(() => scheduleTranslate(true), 0);
 }
 
@@ -88,7 +87,6 @@ interface Popup {
 const popup = ref<Popup | null>(null);
 const readContainer = ref<HTMLElement | null>(null);
 
-// Split English into clickable word tokens + inert gaps (whitespace/punct/digits)
 type Token = { kind: "word" | "gap"; text: string };
 const tokens = computed<Token[]>(() => {
   const out: Token[] = [];
@@ -114,15 +112,16 @@ async function doTranslate() {
   cancelDebounce();
   const text = english.value.trim();
   if (!text || loading.value) return;
+  // If the textarea is focused, the user is actively typing — translate but
+  // DON'T snap to read mode (it'd lose focus mid-edit).
+  const textareaFocused = document.activeElement === textareaRef.value;
   loading.value = true;
   error.value = "";
   try {
     const res = await api.translateText(text);
-    // If the user kept typing during the request, the snapshot is stale —
-    // schedule another round but still surface this result so they see progress.
     chinese.value = res.translation;
     lastTranslatedText = text;
-    if (english.value.trim() === text) {
+    if (english.value.trim() === text && !textareaFocused) {
       mode.value = "read";
     }
   } catch (e: any) {
@@ -135,9 +134,17 @@ async function doTranslate() {
   }
 }
 
-function backToEdit() {
+function enterEditMode() {
   mode.value = "edit";
   popup.value = null;
+  nextTick(() => {
+    textareaRef.value?.focus();
+    // Put cursor at the end so the user can keep typing naturally
+    if (textareaRef.value) {
+      const len = textareaRef.value.value.length;
+      textareaRef.value.setSelectionRange(len, len);
+    }
+  });
 }
 
 function pasteExample() {
@@ -238,24 +245,27 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="reader-page">
+    <!-- Top progress bar — shows during translation, very visible -->
+    <div v-if="loading" class="top-progress" aria-hidden="true" />
+
     <!-- Header -->
     <header class="page-head">
       <div class="title-block">
-        <h1><span class="emoji">📖</span> 阅读 &amp; 翻译</h1>
+        <h1>
+          <span class="emoji">📖</span> 阅读 &amp; 翻译
+          <span v-if="loading" class="loading-banner">
+            <span class="loading-dot" />
+            <span class="loading-dot" style="animation-delay: 0.15s" />
+            <span class="loading-dot" style="animation-delay: 0.3s" />
+            <span class="loading-label">AI 翻译中…</span>
+          </span>
+        </h1>
         <p class="muted small">
-          粘段英文，自动翻译；点任意单词加入单词库
-          <span v-if="loading" class="status-chip loading">⏳ 翻译中…</span>
-          <span v-else-if="addedCount > 0" class="status-chip saved">
+          粘段英文，自动翻译；翻译完成后点任意单词加入单词库
+          <span v-if="addedCount > 0" class="status-chip saved">
             本次已加入 {{ addedCount }} 个 ✓
           </span>
         </p>
-      </div>
-      <div class="actions">
-        <button
-          v-if="mode === 'read'"
-          class="btn btn-ghost"
-          @click="backToEdit"
-        >✎ 编辑原文</button>
       </div>
     </header>
 
@@ -269,11 +279,13 @@ onBeforeUnmount(() => {
           <span class="pane-label">原文（English）</span>
           <span class="pane-meta tertiary">
             <template v-if="wordCount">{{ wordCount }} 词 · </template>{{ charCount }} 字
+            <span v-if="mode === 'read'" class="hint-tag">点词加入 · 点空白处编辑</span>
           </span>
         </div>
 
         <textarea
           v-if="mode === 'edit'"
+          ref="textareaRef"
           v-model="english"
           class="textarea"
           placeholder="把英文粘进来——文章、新闻、邮件、字幕都行（最长 5000 字符）…"
@@ -281,13 +293,18 @@ onBeforeUnmount(() => {
           @paste="onPaste"
         />
 
-        <div v-else ref="readContainer" class="reading" @click.stop>
+        <div
+          v-else
+          ref="readContainer"
+          class="reading"
+          @click="enterEditMode"
+        >
           <template v-for="(t, i) in tokens" :key="i">
             <span
               v-if="t.kind === 'word'"
               class="w"
               :class="{ active: popup?.word === t.text }"
-              @click="onWordClick($event, t.text)"
+              @click.stop="onWordClick($event, t.text)"
             >{{ t.text }}</span>
             <span v-else class="gap">{{ t.text }}</span>
           </template>
@@ -371,6 +388,41 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
+/* ─── Top progress bar (very prominent) ──────────────── */
+.top-progress {
+  position: fixed;
+  top: 0;
+  left: 220px;
+  right: 0;
+  height: 3px;
+  z-index: 1000;
+  background: var(--brand-soft);
+  overflow: hidden;
+  pointer-events: none;
+}
+.top-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--brand) 50%,
+    transparent 100%
+  );
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: top-progress-slide 1.1s linear infinite;
+}
+@keyframes top-progress-slide {
+  0%   { background-position: -50% 0; }
+  100% { background-position: 150% 0; }
+}
+
+@media (max-width: 860px) {
+  .top-progress { left: 0; }
+}
+
 /* ─── Header ─────────────────────────────────────── */
 .page-head {
   display: flex;
@@ -387,9 +439,44 @@ onBeforeUnmount(() => {
   letter-spacing: -0.02em;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 .emoji { font-size: 22px; }
+
+/* ─── Loading banner — prominent inline beside title ──── */
+.loading-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px 4px 12px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.35);
+  animation: banner-pulse 1.8s ease-in-out infinite;
+}
+.loading-label { margin-left: 4px; }
+
+.loading-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #fff;
+  display: inline-block;
+  animation: dot-bounce 1.1s ease-in-out infinite;
+}
+@keyframes dot-bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.6; }
+  40%           { transform: scale(1.1); opacity: 1; }
+}
+@keyframes banner-pulse {
+  0%, 100% { box-shadow: 0 4px 16px rgba(139, 92, 246, 0.35); }
+  50%      { box-shadow: 0 4px 24px rgba(236, 72, 153, 0.55); }
+}
 
 .title-block p {
   margin: 0;
@@ -401,7 +488,6 @@ onBeforeUnmount(() => {
 }
 .small { font-size: 13px; }
 
-.added-chip,
 .status-chip {
   font-weight: 600;
   padding: 2px 10px;
@@ -411,19 +497,6 @@ onBeforeUnmount(() => {
 .status-chip.saved {
   background: var(--brand-soft);
   color: var(--brand);
-}
-.status-chip.loading {
-  background: rgba(0, 0, 0, 0.05);
-  color: var(--text-secondary);
-}
-[data-theme="dark"] .status-chip.loading {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
 .error {
@@ -456,6 +529,8 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--hairline);
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .pane-label {
@@ -469,6 +544,20 @@ onBeforeUnmount(() => {
 .pane-meta {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hint-tag {
+  font-size: 11px;
+  color: var(--brand);
+  background: var(--brand-soft);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 /* ─── Textarea ────────────────────────────────────── */
@@ -726,6 +815,5 @@ onBeforeUnmount(() => {
   .panes { grid-template-columns: 1fr; }
   .pane { min-height: 360px; }
   .page-head { flex-direction: column; align-items: stretch; }
-  .actions { justify-content: flex-end; }
 }
 </style>
