@@ -262,8 +262,6 @@ onUnmounted(stopPolling);
   display: flex;
   flex-direction: column;
   gap: 14px;
-  flex: 1;
-  min-height: 0;
 }
 
 /* Page head */
@@ -277,13 +275,11 @@ onUnmounted(stopPolling);
 .page-head p { margin: 2px 0 0; font-size: 13px; }
 .small { font-size: 12px; }
 
-/* Body grid — fills remaining viewport */
+/* Body grid — fills width; columns size to natural content */
 .body-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.65fr) minmax(340px, 1fr);
   gap: 32px;
-  flex: 1;
-  min-height: 0;
 }
 
 .col-main,
@@ -300,10 +296,8 @@ onUnmounted(stopPolling);
 /* AddBar — auto height */
 .addbar { flex-shrink: 0; }
 
-/* Preview — flex:1 fills available, examples scroll inside */
+/* Preview — auto height, no internal scroll (page handles overflow now) */
 .preview {
-  flex: 1;
-  min-height: 0;
   padding: 18px 22px;
   display: flex;
   flex-direction: column;
@@ -399,24 +393,12 @@ onUnmounted(stopPolling);
   background: var(--brand);
 }
 
-/* The scrolling region inside the preview */
+/* Examples list — natural height, no internal scroll */
 .examples {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-right: 4px;
 }
-
-.examples::-webkit-scrollbar { width: 6px; }
-.examples::-webkit-scrollbar-track { background: transparent; }
-.examples::-webkit-scrollbar-thumb {
-  background: var(--hairline-strong);
-  border-radius: 999px;
-}
-.examples::-webkit-scrollbar-thumb:hover { background: var(--brand); }
 
 .example {
   display: flex;
@@ -460,7 +442,7 @@ onUnmounted(stopPolling);
 }
 
 .empty-state {
-  flex: 1;
+  min-height: 180px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -532,15 +514,12 @@ onUnmounted(stopPolling);
 
 .heatmap-widget { flex-shrink: 0; }
 
-/* The BIG due widget — flex 1 to take all remaining space */
+/* Due widget — natural height, no flex stretch */
 .due-big-widget {
-  flex: 1;
-  min-height: 0;
-  padding: 16px 20px;
+  padding: 24px 20px;
 }
 
 .due-content {
-  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -620,12 +599,9 @@ onUnmounted(stopPolling);
 }
 .stat-label { font-size: 11px; }
 
-/* When stacked (narrow screens), allow natural flow */
+/* Narrow screens — stack and shrink grids */
 @media (max-width: 1080px) {
   .body-grid { grid-template-columns: 1fr; }
-  .dashboard { flex: none; }
-  .preview, .due-big-widget { flex: none; }
-  .examples { max-height: 240px; }
   .recent-grid { grid-template-columns: repeat(2, 1fr); }
 }
 </style>
