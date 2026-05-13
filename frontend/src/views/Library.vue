@@ -237,6 +237,7 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 .page-head h1 {
+  font-family: var(--font-serif);
   font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.02em;
