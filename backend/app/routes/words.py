@@ -1,4 +1,8 @@
+import json
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
@@ -14,10 +18,29 @@ from ..auth import verify_token
 from ..db import SessionLocal, get_db
 from ..models import Example, Word
 from ..offline_dict import has_ecdict, has_tatoeba, lookup_ecdict
+from ..providers import ProviderError, build_provider
 from ..schemas import WordBrief, WordCreate, WordOut
 from ..settings_store import get_settings, is_configured
 
 router = APIRouter(prefix="/api/words", tags=["words"], dependencies=[Depends(verify_token)])
+
+
+USAGE_SYSTEM = (
+    "You are an English vocabulary teacher writing for Chinese learners. "
+    "For the given English word or phrase, write a concise Chinese explanation "
+    "with TWO sections in this exact format (Chinese only, no English explanations):\n\n"
+    "【用法】\n"
+    "1-2 sentences (40-80 Chinese characters): nuance, common usage scenarios, "
+    "frequent collocations. Use 例 to introduce 1-2 short collocation examples in English.\n\n"
+    "【记忆方法】\n"
+    "1-2 sentences (30-60 Chinese characters): mnemonic tricks — etymology, "
+    "association with similar-sounding Chinese, breakdown of word parts, or memorable image.\n\n"
+    "Output ONLY the two sections with their markers. No greeting, no closing."
+)
+
+
+class UsageIn(BaseModel):
+    text: str = Field(..., min_length=1, max_length=80)
 
 
 @router.get("/offline-status")
@@ -223,3 +246,36 @@ def delete_word(word_id: int, db: Session = Depends(get_db)):
     db.delete(w)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/usage")
+async def word_usage_stream(payload: UsageIn, db: Session = Depends(get_db)):
+    """Stream AI-generated usage notes + mnemonic for a single word.
+
+    Returns text/event-stream:
+        data: {"delta": "..."}\n\n
+        ...
+        data: [DONE]\n\n
+
+    or on error:
+        data: {"error": "..."}\n\n
+    """
+    row = get_settings(db)
+    if not is_configured(row):
+        raise HTTPException(
+            status_code=502,
+            detail="AI 未配置，无法生成用法解释。在右上角 ⚙ 设置中配一个 AI provider 再试。",
+        )
+
+    async def gen():
+        try:
+            provider = build_provider(row.provider_type, row.base_url, row.api_key, row.model)
+            async for chunk in provider.chat_stream(
+                USAGE_SYSTEM, payload.text.strip(), max_tokens=500
+            ):
+                yield f"data: {json.dumps({'delta': chunk}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+        except ProviderError as e:
+            yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
