@@ -123,6 +123,17 @@ export interface SystemLogRecord {
   [key: string]: unknown;
 }
 
+export interface WeakWordItem {
+  id: number;
+  text: string;
+  translation: string;
+  phonetic: string;
+  mastery: number;
+  review_count: number;
+  correct_count: number;
+  wrong_count: number;
+}
+
 export interface CurlReq {
   provider_type: ProviderType;
   base_url: string;
@@ -400,4 +411,7 @@ export const api = {
     request<{ items: Array<{ id: number; username: string; is_admin: boolean; created_at: string; last_login_at: string | null }> }>(
       "/api/admin/users",
     ),
+
+  weakWords: (limit = 5) =>
+    request<{ items: WeakWordItem[] }>(`/api/stats/weak-words?limit=${limit}`),
 };
