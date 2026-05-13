@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -67,6 +68,45 @@ class OpenAIProvider(Provider):
             return data["choices"][0]["message"]["content"]
         except (KeyError, IndexError) as e:
             raise ProviderError(f"unexpected response shape: {data}") from e
+
+    async def chat_stream(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[str]:
+        url = f"{self.base_url}/chat/completions"
+        body: dict[str, Any] = {
+            "model": self.model,
+            "temperature": 0.4,
+            "stream": True,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        }
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
+
+        client = _client()
+        async with client.stream("POST", url, headers=self._headers(), json=body) as resp:
+            if resp.status_code >= 400:
+                text = (await resp.aread()).decode("utf-8", errors="replace")
+                raise ProviderError(f"{resp.status_code}: {text[:300]}")
+            async for raw_line in resp.aiter_lines():
+                if not raw_line or not raw_line.startswith("data:"):
+                    continue
+                payload = raw_line[5:].strip()
+                if payload == "[DONE]":
+                    return
+                try:
+                    obj = json.loads(payload)
+                    delta = obj.get("choices", [{}])[0].get("delta", {}).get("content")
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    continue
+                if delta:
+                    yield delta
 
     async def list_models(self) -> list[str]:
         url = f"{self.base_url}/models"

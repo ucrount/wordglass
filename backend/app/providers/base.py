@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any
+from typing import Any, AsyncIterator
 
 
 class ProviderError(Exception):
@@ -39,6 +39,21 @@ class Provider(abc.ABC):
 
         max_tokens is a hint — providers that don't support it should ignore it.
         """
+
+    async def chat_stream(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream the assistant text as it arrives.
+
+        Default fallback: call self.chat() and yield the entire result once.
+        Subclasses with native streaming (e.g. OpenAI-compatible) should override.
+        """
+        full = await self.chat(system, user, max_tokens=max_tokens)
+        yield full
 
     @abc.abstractmethod
     async def list_models(self) -> list[str]:
