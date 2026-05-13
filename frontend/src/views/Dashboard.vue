@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { RouterLink } from "vue-router";
-import { api, type HeatmapData, type Stats, type WordBrief, type WordOut } from "../api";
+import { api, type Stats, type WordBrief, type WordOut } from "../api";
 import AddBar from "../components/AddBar.vue";
-import Heatmap from "../components/Heatmap.vue";
+import WeakWords from "../components/WeakWords.vue";
 import WordCard from "../components/WordCard.vue";
 import { isSpeechSupported, speak } from "../composables/tts";
 
 const stats = ref<Stats>({ total: 0, due_today: 0, mastered: 0, added_this_week: 0 });
 const recent = ref<WordBrief[]>([]);
-const heat = ref<HeatmapData>({ days: {}, since: "" });
 const recentError = ref("");
 const initialLoad = ref(true);
 const lastAdded = ref<WordOut | null>(null);
@@ -19,9 +18,6 @@ const ttsSupported = isSpeechSupported();
 
 async function refreshStats() {
   try { stats.value = await api.stats(); } catch { /* ignore */ }
-}
-async function refreshHeatmap() {
-  try { heat.value = await api.heatmap(84); } catch { /* ignore */ }
 }
 async function refreshRecent() {
   recentError.value = "";
@@ -40,7 +36,7 @@ async function refreshRecent() {
 }
 
 async function refreshAll() {
-  await Promise.all([refreshStats(), refreshHeatmap(), refreshRecent()]);
+  await Promise.all([refreshStats(), refreshRecent()]);
   initialLoad.value = false;
 }
 
@@ -79,17 +75,11 @@ function onAdded(w: WordOut) {
   lastAdded.value = w;
   refreshStats();
   refreshRecent();
-  refreshHeatmap();
   if (ttsSupported) setTimeout(() => speak(w.text), 100);
   if (!w.category || w.examples.length === 0) {
     pollEnrichment(w.id);
   }
 }
-
-const activeDays = computed(() => Object.keys(heat.value.days).length);
-const totalActions = computed(() =>
-  Object.values(heat.value.days).reduce((a, b) => a + b, 0)
-);
 
 onMounted(refreshAll);
 onUnmounted(stopPolling);
@@ -185,14 +175,8 @@ onUnmounted(stopPolling);
 
       <!-- ─── RIGHT SIDEBAR ─────────────────────────────── -->
       <aside class="col-side">
-        <!-- Heatmap -->
-        <section class="widget glass heatmap-widget">
-          <div class="widget-head">
-            <h3>学习热力图</h3>
-            <span class="tertiary small">{{ activeDays }} 天 · {{ totalActions }} 次</span>
-          </div>
-          <Heatmap :data="heat.days" :weeks="12" />
-        </section>
+        <!-- Weak words (replaces heatmap) -->
+        <WeakWords />
 
         <!-- BIG today's review -->
         <section class="widget glass due-big-widget">
@@ -516,7 +500,6 @@ onUnmounted(stopPolling);
   font-weight: 600;
 }
 
-.heatmap-widget { flex-shrink: 0; }
 
 /* Due widget — natural height, no flex stretch */
 .due-big-widget {
