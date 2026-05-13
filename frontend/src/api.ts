@@ -155,10 +155,10 @@ export const api = {
     request<{ ecdict: boolean; tatoeba: boolean }>("/api/words/offline-status"),
   previewWord: (text: string) =>
     request<WordPreview>(`/api/words/preview?text=${encodeURIComponent(text)}`),
-  translateText: (text: string) =>
+  translateText: (text: string, target_lang: "zh" | "en" = "zh") =>
     request<{ translation: string }>("/api/translate", {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, target_lang }),
     }),
 
   dueWords: (limit = 50) => request<WordOut[]>(`/api/review/due?limit=${limit}`),
