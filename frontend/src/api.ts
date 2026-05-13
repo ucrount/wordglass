@@ -132,6 +132,68 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+async function streamSSE(
+  path: string,
+  body: unknown,
+  onDelta: (text: string) => void,
+  onError: (msg: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const headers = new Headers({ "Content-Type": "application/json" });
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  try {
+    const resp = await fetch(path, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!resp.ok) {
+      let detail = `${resp.status}`;
+      try {
+        const j = await resp.json();
+        detail = j.detail ?? JSON.stringify(j);
+      } catch {
+        try { detail = await resp.text(); } catch { /* keep status */ }
+      }
+      onError(detail);
+      return;
+    }
+    if (!resp.body) {
+      onError("流式响应不可读");
+      return;
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) >= 0) {
+        const rawEvent = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 2);
+        if (!rawEvent.startsWith("data:")) continue;
+        const payload = rawEvent.slice(5).trim();
+        if (payload === "[DONE]") return;
+        try {
+          const obj = JSON.parse(payload);
+          if (obj.error) { onError(obj.error); return; }
+          if (typeof obj.delta === "string") onDelta(obj.delta);
+        } catch { /* malformed chunk — ignore */ }
+      }
+    }
+  } catch (e: unknown) {
+    const err = e as { name?: string; message?: string };
+    if (err?.name === "AbortError") return;
+    onError(err?.message || "网络错误");
+  }
+}
+
 export const api = {
   health: () => request<{ ok: boolean }>("/api/health"),
   stats: () => request<Stats>("/api/stats"),
@@ -160,6 +222,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text, target_lang }),
     }),
+  translateTextStream: (
+    text: string,
+    target_lang: "zh" | "en",
+    onDelta: (t: string) => void,
+    onError: (m: string) => void,
+    signal?: AbortSignal,
+  ) => streamSSE("/api/translate/stream", { text, target_lang }, onDelta, onError, signal),
+
+  wordUsageStream: (
+    text: string,
+    onDelta: (t: string) => void,
+    onError: (m: string) => void,
+    signal?: AbortSignal,
+  ) => streamSSE("/api/words/usage", { text }, onDelta, onError, signal),
 
   dueWords: (limit = 50) => request<WordOut[]>(`/api/review/due?limit=${limit}`),
   submitReview: (word_id: number, mode: string, result: ReviewResult) =>
