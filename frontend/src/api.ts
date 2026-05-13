@@ -87,6 +87,50 @@ export interface TestResult {
   error?: string;
 }
 
+export interface TestResultV2 {
+  ok: boolean;
+  category: "ok" | "dns" | "connect" | "timeout" | "auth" | "not_found" | "rate_limit" | "upstream" | "unknown" | string;
+  detail: string;
+  raw: string;
+  echo: string;
+  ms: number;
+}
+
+export interface AiCallRecord {
+  id: number;
+  ts: number;
+  kind: "chat" | "stream";
+  provider: string;
+  model: string;
+  base_url: string;
+  system: string;
+  user: string;
+  response: string;
+  status: "ok" | "error";
+  error?: string | null;
+  http_status?: number | null;
+  json_mode?: boolean | null;
+  max_tokens?: number | null;
+  chunks?: number | null;
+  first_chunk_ms?: number | null;
+  ms: number;
+}
+
+export interface SystemLogRecord {
+  id: number;
+  ts: number;
+  event: string;
+  [key: string]: unknown;
+}
+
+export interface CurlReq {
+  provider_type: ProviderType;
+  base_url: string;
+  api_key: string;
+  model: string;
+  reveal_key: boolean;
+}
+
 const TOKEN_KEY = "wordglass.token";
 
 export function getToken(): string {
@@ -256,4 +300,55 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  // ── Settings v2 ──────────────────────────────────────────────────
+  testSettingsV2: (payload: SettingsIn) =>
+    request<TestResultV2>("/api/settings/test", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  generateCurl: (payload: CurlReq) =>
+    request<{ command: string }>("/api/settings/curl", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  listAiLogs: (kind?: string, limit = 50) => {
+    const q = new URLSearchParams();
+    q.set("limit", String(limit));
+    if (kind) q.set("kind", kind);
+    return request<{ items: AiCallRecord[] }>(`/api/settings/logs/ai?${q}`);
+  },
+
+  clearAiLogs: () =>
+    request<{ ok: boolean }>("/api/settings/logs/ai/clear", { method: "POST" }),
+
+  listSystemLogs: (event_prefix?: string, limit = 200) => {
+    const q = new URLSearchParams();
+    q.set("limit", String(limit));
+    if (event_prefix) q.set("event_prefix", event_prefix);
+    return request<{ items: SystemLogRecord[] }>(`/api/settings/logs/system?${q}`);
+  },
+
+  clearSystemLogs: () =>
+    request<{ ok: boolean }>("/api/settings/logs/system/clear", { method: "POST" }),
+
+  streamSystemLogs: (
+    onRecord: (r: SystemLogRecord) => void,
+    onError: (m: string) => void,
+    signal?: AbortSignal,
+  ) =>
+    streamSSE(
+      "/api/settings/logs/system/stream",
+      {},
+      (delta) => {
+        try {
+          const obj = JSON.parse(delta) as SystemLogRecord;
+          onRecord(obj);
+        } catch { /* ignore malformed */ }
+      },
+      onError,
+      signal,
+    ),
 };
