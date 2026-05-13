@@ -1,10 +1,18 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { RouterLink } from "vue-router";
+import { RouterLink, useRouter } from "vue-router";
 import { useTheme } from "../composables/theme";
+import { useAuth } from "../composables/auth";
 
 const { theme, toggle } = useTheme();
+const { user, clearSession } = useAuth();
+const router = useRouter();
 const mobileOpen = ref(false);
+
+function logout() {
+  clearSession();
+  router.replace({ name: "login" });
+}
 
 const NAV = [
   { to: "/", label: "主页", icon: "🏠", exact: true },
@@ -74,6 +82,13 @@ const TOOLS = [
     </nav>
 
     <div class="footer">
+      <div v-if="user" class="user-block">
+        <span class="user-icon">👤</span>
+        <div class="user-info">
+          <div class="username">{{ user.username }}<span v-if="user.is_admin" class="admin-tag">👑</span></div>
+          <button class="logout-btn" @click="logout">退出</button>
+        </div>
+      </div>
       <button class="theme-btn" @click="toggle" :title="theme === 'dark' ? '切到亮色' : '切到暗色'">
         <span class="icon theme-icon">{{ theme === "dark" ? "☀" : "🌙" }}</span>
         <span class="label">{{ theme === "dark" ? "亮色模式" : "暗色模式" }}</span>
@@ -210,6 +225,42 @@ const TOOLS = [
   border-top: 1px solid var(--hairline);
   padding-top: 12px;
 }
+
+.user-block {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+  margin-bottom: 4px;
+}
+.user-icon { font-size: 16px; opacity: 0.7; }
+.user-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.username {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.admin-tag {
+  font-size: 11px;
+}
+.logout-btn {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  text-align: left;
+}
+.logout-btn:hover { color: var(--danger); }
 
 .theme-btn {
   appearance: none;
