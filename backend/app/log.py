@@ -31,11 +31,19 @@ def now_ms() -> float:
 
 
 def log_event(event: str, **fields) -> None:
-    """Emit one log line. Always flushes so SSE-side debugging works in real time."""
+    """Emit one log line. Writes to stderr (systemd journal) and pushes to
+    the in-memory ring buffer that the /api/settings/logs/system endpoint
+    exposes for the in-app log viewer.
+    """
     payload = {"ts": time.time(), "event": event, **fields}
     try:
         line = json.dumps(payload, ensure_ascii=False, default=str)
     except Exception:
-        # Last-resort: don't ever crash on bad logging
         line = f'{{"event": "{event}", "log_error": "json_fail"}}'
     print(line, file=sys.stderr, flush=True)
+    try:
+        from .log_buffer import push_system
+        push_system(payload)
+    except Exception:
+        # Never break the calling code because of logging
+        pass
