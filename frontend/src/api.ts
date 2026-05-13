@@ -131,7 +131,7 @@ export interface CurlReq {
   reveal_key: boolean;
 }
 
-const TOKEN_KEY = "wordglass.token";
+const TOKEN_KEY = "wordglass.jwt";
 
 export function getToken(): string {
   return localStorage.getItem(TOKEN_KEY) ?? "";
@@ -169,6 +169,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       window.dispatchEvent(
         new CustomEvent("wordglass:api-error", { detail: { status: resp.status, message: detail } })
       );
+      if (resp.status === 401) {
+        window.dispatchEvent(new CustomEvent("wordglass:unauth"));
+      }
     }
     throw new ApiError(detail, resp.status);
   }
@@ -350,5 +353,51 @@ export const api = {
       },
       onError,
       signal,
+    ),
+
+  // ── Auth (v0.4) ──────────────────────────────────────────────
+  setupStatus: () =>
+    request<{ needs_setup: boolean; registration_enabled: boolean }>("/api/auth/setup-status"),
+
+  setup: (username: string, password: string) =>
+    request<{ token: string; username: string; is_admin: boolean }>(
+      "/api/auth/setup",
+      { method: "POST", body: JSON.stringify({ username, password }) },
+    ),
+
+  login: (username: string, password: string, remember: boolean) =>
+    request<{ token: string; username: string; is_admin: boolean }>(
+      "/api/auth/login",
+      { method: "POST", body: JSON.stringify({ username, password, remember }) },
+    ),
+
+  register: (username: string, password: string, invite_code: string) =>
+    request<{ token: string; username: string; is_admin: boolean }>(
+      "/api/auth/register",
+      { method: "POST", body: JSON.stringify({ username, password, invite_code }) },
+    ),
+
+  me: () =>
+    request<{ id: number; username: string; is_admin: boolean }>("/api/auth/me"),
+
+  // ── Admin (v0.4) ─────────────────────────────────────────────
+  getInvite: () =>
+    request<{ invite_code: string; registration_enabled: boolean }>("/api/admin/invite"),
+
+  regenerateInvite: () =>
+    request<{ invite_code: string; registration_enabled: boolean }>(
+      "/api/admin/invite/regenerate",
+      { method: "POST" },
+    ),
+
+  setRegistration: (enabled: boolean) =>
+    request<{ invite_code: string; registration_enabled: boolean }>(
+      "/api/admin/registration",
+      { method: "PUT", body: JSON.stringify({ enabled }) },
+    ),
+
+  listUsers: () =>
+    request<{ items: Array<{ id: number; username: string; is_admin: boolean; created_at: string; last_login_at: string | null }> }>(
+      "/api/admin/users",
     ),
 };
