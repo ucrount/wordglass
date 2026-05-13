@@ -14,11 +14,11 @@
 |---|---|
 | **离线翻译** | 内置 ECDICT（77 万词条）。加单词时本地词典毫秒级返回音标 / 词性 / 中文。 |
 | **离线例句** | 内置 Tatoeba 英汉对照句库。每个单词自动配 5 句由易到难的真实语料。 |
-| **阅读 & 翻译** | 独立页面（侧栏「📖 阅读翻译」）：粘整段英文 → AI 翻译为中文 → 点任意单词查 ECDICT → 一键加入单词库。原文/译文自动保留，下次打开还在。 |
-| **AI 可选** | ECDICT 没收录的生僻词或短语才会调 AI 兜底；分类、补例句都在后台异步进行，不阻塞主页响应。 |
+| **阅读 & 翻译** | 独立页面（侧栏「📖 阅读翻译」）：粘整段文字 → AI 双向翻译（英→中 / 中→英 自由切换）。英→中 模式下点任意单词查 ECDICT，底部固定面板显示音标 / 词性 / 中文释义，一键加入单词库。原文/译文/方向都本地保留，刷新还在。 |
+| **AI 可选** | ECDICT 没收录的生僻词或短语才会调 AI 兜底；分类、补例句、整段翻译都在后台异步进行，不阻塞主页响应。 |
 | **单词库** | 按分类侧栏 + 搜索 + 掌握度筛选；点单词进抽屉看详情、删词、批量 🤖 AI 分类。 |
 | **练习中心** | 抽认卡 + 字母槽听写 + 整句中→英 / 英→中 翻译。四档评分阶梯复习（间隔重复）。 |
-| **设计** | Apple Liquid Glass：渐变背景 + 半透明卡片 + 大圆角 + 自适应明暗模式。 |
+| **设计** | Liquid Glass + 英文书感：墨绿 + 暖褐配色 + 半透明玻璃卡 + 衬线英文 + 动态暖 blob 背景。自适应明暗模式。 |
 | **一键部署** | `sudo bash install.sh` 完成 git pull + 依赖 + 数据下载 + systemd + nginx，幂等可重跑。 |
 
 ---
@@ -106,12 +106,14 @@ AI_MODEL=deepseek-chat
 - [x] **Step 5** 单词库页（侧栏分类 + 搜索 + 掌握度筛选 + 详情抽屉）
 - [x] **Step 6** 离线优先：ECDICT + Tatoeba，AI 退居可选（背景异步补分类/例句）
 - [x] **Step 7** 阅读翻译页（独立路由，整段 AI 翻译 + 点词加入单词库 + 本地保存原文）
+- [x] **Step 8** Reader v2：方向切换（英↔中）+ 固定底部单词详情面板 + 全局 token 化 UI 重设计（玻璃 + 英文书感，墨绿/暖褐配色）
 - [ ] 二期：TTS 听写、词根派生、统计图表、PWA、句子单独入库
 
 ## 🎨 设计
 
-Apple Liquid Glass：渐变背景 + `backdrop-filter: blur(24px) saturate(180%)` + 半透明卡片 + 大圆角。  
-核心样式见 [`frontend/src/styles/glass.css`](frontend/src/styles/glass.css)。
+**Liquid Glass + 英文书感**：墨绿（#4a6e3e）+ 暖褐（#b89165）双色调，米黄 / 橄榄 / 暖褐三色 blob 缓慢漂移，玻璃卡片 `backdrop-filter: blur(22px) saturate(180%)`。英文单词、页面标题、大数字用衬线（Iowan Old Style / Charter / Georgia），中文 UI 用 -apple-system。明暗主题完整支持。
+
+设计 token 全部在 [`frontend/src/styles/glass.css`](frontend/src/styles/glass.css) 的 CSS 变量里，方便整体改色。
 
 ---
 
