@@ -205,12 +205,8 @@ const dayLabels = ["", "二", "", "四", "", "六", ""];
 .cell {
   aspect-ratio: 1;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--hairline);
   transition: transform 120ms ease, box-shadow 200ms ease;
-}
-
-[data-theme="dark"] .cell {
-  background: rgba(255, 255, 255, 0.06);
 }
 
 .cell:hover {
@@ -228,10 +224,13 @@ const dayLabels = ["", "二", "", "四", "", "六", ""];
   box-shadow: 0 0 0 2px var(--brand);
 }
 
-.cell.level-1 { background: rgba(139, 92, 246, 0.30); }
-.cell.level-2 { background: rgba(139, 92, 246, 0.55); }
-.cell.level-3 { background: rgba(139, 92, 246, 0.80); }
-.cell.level-4 { background: rgba(139, 92, 246, 1); box-shadow: 0 0 8px rgba(139, 92, 246, 0.5); }
+.cell.level-1 { background: color-mix(in srgb, var(--brand) 30%, transparent); }
+.cell.level-2 { background: color-mix(in srgb, var(--brand) 55%, transparent); }
+.cell.level-3 { background: color-mix(in srgb, var(--brand) 80%, transparent); }
+.cell.level-4 {
+  background: var(--brand);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--brand) 50%, transparent);
+}
 
 /* Legend */
 .legend {
@@ -249,15 +248,11 @@ const dayLabels = ["", "二", "", "四", "", "六", ""];
   width: 11px;
   height: 11px;
   border-radius: 3px;
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--hairline);
 }
 
-[data-theme="dark"] .cell-mini {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.cell-mini.level-1 { background: rgba(139, 92, 246, 0.30); }
-.cell-mini.level-2 { background: rgba(139, 92, 246, 0.55); }
-.cell-mini.level-3 { background: rgba(139, 92, 246, 0.80); }
-.cell-mini.level-4 { background: rgba(139, 92, 246, 1); }
+.cell-mini.level-1 { background: color-mix(in srgb, var(--brand) 30%, transparent); }
+.cell-mini.level-2 { background: color-mix(in srgb, var(--brand) 55%, transparent); }
+.cell-mini.level-3 { background: color-mix(in srgb, var(--brand) 80%, transparent); }
+.cell-mini.level-4 { background: var(--brand); }
 </style>
