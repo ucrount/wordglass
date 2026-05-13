@@ -433,6 +433,7 @@ onBeforeUnmount(() => {
 }
 
 .title-block h1 {
+  font-family: var(--font-serif);
   margin: 0 0 4px;
   font-size: 22px;
   font-weight: 700;
@@ -451,12 +452,12 @@ onBeforeUnmount(() => {
   gap: 6px;
   padding: 4px 14px 4px 12px;
   border-radius: 999px;
-  background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
-  color: #fff;
+  background: linear-gradient(135deg, var(--brand) 0%, var(--accent) 100%);
+  color: var(--brand-strong-text);
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.01em;
-  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.35);
+  box-shadow: 0 4px 16px rgba(74, 110, 62, 0.35);
   animation: banner-pulse 1.8s ease-in-out infinite;
 }
 .loading-label { margin-left: 4px; }
@@ -474,8 +475,8 @@ onBeforeUnmount(() => {
   40%           { transform: scale(1.1); opacity: 1; }
 }
 @keyframes banner-pulse {
-  0%, 100% { box-shadow: 0 4px 16px rgba(139, 92, 246, 0.35); }
-  50%      { box-shadow: 0 4px 24px rgba(236, 72, 153, 0.55); }
+  0%, 100% { box-shadow: 0 4px 16px rgba(74, 110, 62, 0.35); }
+  50%      { box-shadow: 0 4px 24px rgba(184, 145, 101, 0.55); }
 }
 
 .title-block p {
@@ -654,6 +655,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
 }
 .popup-word {
+  font-family: var(--font-serif);
   font-size: 17px;
   font-weight: 700;
   color: var(--text-primary);
@@ -685,16 +687,17 @@ onBeforeUnmount(() => {
 }
 
 .popup-pos {
-  background: rgba(0, 0, 0, 0.05);
+  font-family: var(--font-serif);
+  font-style: italic;
+  background: var(--brand-soft);
   padding: 2px 8px;
   border-radius: 999px;
-  color: var(--text-secondary);
+  color: var(--brand);
 }
-[data-theme="dark"] .popup-pos { background: rgba(255, 255, 255, 0.08); }
 
 .popup-trans {
   font-size: 14px;
-  color: var(--brand);
+  color: var(--accent);
   font-weight: 500;
   line-height: 1.55;
 }
