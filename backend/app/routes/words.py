@@ -14,16 +14,16 @@ from ..ai import (
     generate_examples,
     lookup_local,
 )
-from ..auth import verify_token
+from ..auth import current_user
 from ..db import SessionLocal, get_db
 from ..log import log_event, new_request_id, now_ms
-from ..models import Example, Word
+from ..models import Example, User, Word
 from ..offline_dict import has_ecdict, has_tatoeba, lookup_ecdict
 from ..providers import ProviderError, build_provider
 from ..schemas import WordBrief, WordCreate, WordOut
 from ..settings_store import get_settings, is_configured
 
-router = APIRouter(prefix="/api/words", tags=["words"], dependencies=[Depends(verify_token)])
+router = APIRouter(prefix="/api/words", tags=["words"], dependencies=[Depends(current_user)])
 
 
 USAGE_SYSTEM = (
@@ -54,17 +54,15 @@ def offline_status():
 def preview_word(
     text: str = Query(..., min_length=1, max_length=80),
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
-    """Instant ECDICT lookup for the reader-panel tooltip. Never writes.
-
-    Returns `already_saved=True` if this word (after ECDICT lemma resolution)
-    is already in the user's library — so the popup can show 已加入 instead of
-    an add button.
-    """
+    """Instant ECDICT lookup for the reader-panel tooltip. Never writes."""
     hit = lookup_ecdict(text.strip().lower())
     if hit is None:
         return {"found": False, "text": text}
-    existing = db.query(Word.id).filter(Word.text == hit["text"]).first()
+    existing = db.query(Word.id).filter(
+        Word.text == hit["text"], Word.user_id == user.id
+    ).first()
     return {
         "found": True,
         "text": hit["text"],
@@ -75,27 +73,22 @@ def preview_word(
     }
 
 
-async def _enrich_word(word_id: int, do_category: bool, do_examples: bool) -> None:
-    """Runs AFTER the response is sent. Owns its own DB session so it doesn't
-    race with the request session that's already closed.
-
-    Each step is best-effort — failures are swallowed because they're not
-    visible to the user anyway, and the next add_word run will retry.
-    """
+async def _enrich_word(word_id: int, user_id: int, do_category: bool, do_examples: bool) -> None:
+    """Runs AFTER the response is sent. Owns its own DB session."""
     db = SessionLocal()
     try:
         word = db.get(Word, word_id)
-        if word is None:
+        if word is None or word.user_id != user_id:
             return
 
         if do_category and not (word.category or ""):
-            cat = await categorize_word(word.text, db)
+            cat = await categorize_word(word.text, db, user_id)
             if cat:
                 word.category = cat
                 db.commit()
 
         if do_examples and not word.examples:
-            examples = await generate_examples(word.text, word.translation or "", db)
+            examples = await generate_examples(word.text, word.translation or "", db, user_id)
             if examples:
                 for ex in examples:
                     word.examples.append(Example(en=ex["en"], zh=ex.get("zh", "")))
@@ -109,9 +102,10 @@ async def add_word(
     payload: WordCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
     text = payload.text.strip().lower()
-    existing = db.query(Word).filter(Word.text == text).first()
+    existing = db.query(Word).filter(Word.text == text, Word.user_id == user.id).first()
     if existing:
         return existing
 
@@ -119,6 +113,7 @@ async def add_word(
 
     if local is not None:
         word = Word(
+            user_id=user.id,
             text=local["text"],
             phonetic=local["phonetic"],
             pos=local["pos"],
@@ -131,25 +126,24 @@ async def add_word(
         db.commit()
         db.refresh(word)
 
-        # If AI is configured, fill missing fields after the response is sent.
-        # The frontend polls /api/words/{id} for a few seconds to see updates.
-        settings_row = get_settings(db)
+        settings_row = get_settings(db, user.id)
         if is_configured(settings_row):
-            need_category = True  # always empty at this point
+            need_category = True
             need_examples = len(word.examples) == 0
             if need_category or need_examples:
                 background_tasks.add_task(
-                    _enrich_word, word.id, need_category, need_examples
+                    _enrich_word, word.id, user.id, need_category, need_examples
                 )
         return word
 
     # ECDICT miss — must use AI synchronously to get any word data at all.
     try:
-        ai_payload = await fetch_word_payload(text, db)
+        ai_payload = await fetch_word_payload(text, db, user.id)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
     word = Word(
+        user_id=user.id,
         text=ai_payload.get("text", text),
         phonetic=ai_payload.get("phonetic", ""),
         pos=ai_payload.get("pos", ""),
@@ -166,11 +160,11 @@ async def add_word(
 
 
 @router.get("/categories")
-def categories(db: Session = Depends(get_db)):
-    """All known categories + counts. Returns the curated list with 0 for
-    categories that don't have any words yet, so the UI can show full picture."""
+def categories(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """All known categories + counts for current user."""
     rows = (
         db.query(Word.category, func.count(Word.id))
+        .filter(Word.user_id == user.id)
         .group_by(Word.category)
         .all()
     )
@@ -183,10 +177,12 @@ def categories(db: Session = Depends(get_db)):
 
 
 @router.post("/recategorize")
-async def recategorize(db: Session = Depends(get_db)):
-    """Batch-assign categories to all uncategorized words. One AI call per
-    batch of 20 — much cheaper than calling once per word."""
-    uncategorized = db.query(Word).filter((Word.category == "") | (Word.category.is_(None))).all()
+async def recategorize(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Batch-assign categories to all uncategorized words of current user."""
+    uncategorized = db.query(Word).filter(
+        Word.user_id == user.id,
+        (Word.category == "") | (Word.category.is_(None)),
+    ).all()
     if not uncategorized:
         return {"updated": 0, "total": 0}
 
@@ -196,7 +192,7 @@ async def recategorize(db: Session = Depends(get_db)):
         chunk = uncategorized[i : i + BATCH]
         words = [w.text for w in chunk]
         try:
-            results = await categorize_words_batch(words, db)
+            results = await categorize_words_batch(words, db, user.id)
         except RuntimeError as e:
             raise HTTPException(status_code=502, detail=str(e))
         for w in chunk:
@@ -216,8 +212,9 @@ def list_words(
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
-    query = db.query(Word)
+    query = db.query(Word).filter(Word.user_id == user.id)
     if q:
         like = f"%{q.lower()}%"
         query = query.filter(func.lower(Word.text).like(like) | Word.translation.like(f"%{q}%"))
@@ -232,17 +229,17 @@ def list_words(
 
 
 @router.get("/{word_id}", response_model=WordOut)
-def get_word(word_id: int, db: Session = Depends(get_db)):
+def get_word(word_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     w = db.get(Word, word_id)
-    if not w:
+    if not w or w.user_id != user.id:
         raise HTTPException(status_code=404, detail="word not found")
     return w
 
 
 @router.delete("/{word_id}")
-def delete_word(word_id: int, db: Session = Depends(get_db)):
+def delete_word(word_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     w = db.get(Word, word_id)
-    if not w:
+    if not w or w.user_id != user.id:
         raise HTTPException(status_code=404, detail="word not found")
     db.delete(w)
     db.commit()
@@ -250,18 +247,13 @@ def delete_word(word_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/usage")
-async def word_usage_stream(payload: UsageIn, db: Session = Depends(get_db)):
-    """Stream AI-generated usage notes + mnemonic for a single word.
-
-    Returns text/event-stream:
-        data: {"delta": "..."}\n\n
-        ...
-        data: [DONE]\n\n
-
-    or on error:
-        data: {"error": "..."}\n\n
-    """
-    row = get_settings(db)
+async def word_usage_stream(
+    payload: UsageIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Stream AI-generated usage notes + mnemonic for a single word."""
+    row = get_settings(db, user.id)
     if not is_configured(row):
         raise HTTPException(
             status_code=502,
@@ -309,7 +301,7 @@ async def word_usage_stream(payload: UsageIn, db: Session = Depends(get_db)):
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # tell nginx not to buffer
+            "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
         },
     )
