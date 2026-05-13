@@ -101,3 +101,64 @@ class TestResultOut(BaseModel):
     ok: bool
     echo: Optional[str] = None
     error: Optional[str] = None
+
+
+# ─── Settings v2: AI logs, system logs, curl preview, classified test ─────
+
+
+class AiCallRecord(BaseModel):
+    id: int
+    ts: float
+    kind: str
+    provider: str
+    model: str
+    base_url: str
+    system: str = ""
+    user: str = ""
+    response: str = ""
+    status: str = "ok"
+    error: Optional[str] = None
+    http_status: Optional[int] = None
+    json_mode: Optional[bool] = None
+    max_tokens: Optional[int] = None
+    chunks: Optional[int] = None
+    first_chunk_ms: Optional[float] = None
+    ms: float = 0.0
+
+
+class AiLogsOut(BaseModel):
+    items: List[AiCallRecord]
+
+
+class SystemLogRecord(BaseModel):
+    id: int
+    ts: float
+    event: str
+
+    class Config:
+        extra = "allow"
+
+
+class SystemLogsOut(BaseModel):
+    items: List[SystemLogRecord]
+
+
+class CurlIn(BaseModel):
+    provider_type: str
+    base_url: str
+    api_key: Optional[str] = ""
+    model: str
+    reveal_key: bool = False
+
+
+class CurlOut(BaseModel):
+    command: str
+
+
+class TestResultV2(BaseModel):
+    ok: bool
+    category: str = ""
+    detail: str = ""
+    raw: str = ""
+    echo: str = ""
+    ms: float = 0
