@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { RouterLink } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import { api, type ReviewResult, type WordOut } from "../api";
 import { isSpeechSupported, speak, stopSpeaking } from "../composables/tts";
 import LetterSlots from "../components/LetterSlots.vue";
@@ -40,6 +40,18 @@ const loadError = ref("");
 const session = ref({ done: 0, correct: 0 });
 const slotsRef = ref<InstanceType<typeof LetterSlots> | null>(null);
 const textRef = ref<HTMLTextAreaElement | HTMLInputElement | null>(null);
+
+const route = useRoute();
+const router = useRouter();
+
+const isFocusMode = computed(() => {
+  const v = route.query.word_ids;
+  return typeof v === "string" && v.length > 0;
+});
+
+function exitFocus() {
+  router.push({ path: "/practice" });
+}
 
 const word = computed<WordOut | null>(() => queue.value[current.value] ?? null);
 const total = computed(() => queue.value.length);
@@ -100,7 +112,21 @@ async function load() {
   loading.value = true;
   loadError.value = "";
   try {
-    queue.value = await api.dueWords(50);
+    const raw = route.query.word_ids;
+    if (typeof raw === "string" && raw.length > 0) {
+      const ids = raw
+        .split(",")
+        .map((s) => parseInt(s.trim(), 10))
+        .filter((n) => !Number.isNaN(n));
+      if (ids.length > 0) {
+        const results = await Promise.all(ids.map((id) => api.getWord(id)));
+        queue.value = results;
+      } else {
+        queue.value = [];
+      }
+    } else {
+      queue.value = await api.dueWords(50);
+    }
     current.value = 0;
     session.value = { done: 0, correct: 0 };
     resetCard();
@@ -227,6 +253,10 @@ watch(direction, (d) => {
   resetCard();
 });
 
+watch(() => route.query.word_ids, () => {
+  load();
+});
+
 // ─── Keyboard ─────────────────────────────────────────────────────────────
 function handleKey(e: KeyboardEvent) {
   if (loading.value || finished.value || total.value === 0) return;
@@ -267,6 +297,13 @@ onUnmounted(() => {
 
 <template>
   <div class="practice">
+    <!-- Focus mode banner -->
+    <div v-if="isFocusMode && !loading && !loadError" class="focus-banner glass-dim">
+      <span class="focus-icon">💪</span>
+      <span class="focus-text">专练模式 · {{ total }} 个词</span>
+      <button class="exit-focus" @click="exitFocus">退出专练</button>
+    </div>
+
     <!-- Top tabs -->
     <div v-if="!loading && !loadError && total > 0 && !finished" class="tabs glass">
       <button
@@ -1050,4 +1087,33 @@ onUnmounted(() => {
   .answer-input { font-size: 16px; }
   .btn.rating { min-width: 70px; padding: 10px 14px; }
 }
+
+/* ─── Focus mode banner ─────────────────────────── */
+.focus-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  align-self: flex-start;
+}
+.focus-icon { font-size: 14px; }
+.focus-text { font-weight: 600; }
+.exit-focus {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  margin-left: 4px;
+}
+.exit-focus:hover { color: var(--text-primary); }
 </style>
