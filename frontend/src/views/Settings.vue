@@ -322,6 +322,7 @@ onMounted(load);
 }
 
 h1 {
+  font-family: var(--font-serif);
   font-size: 32px;
   font-weight: 700;
   letter-spacing: -0.02em;
@@ -366,12 +367,12 @@ h1 {
   font-weight: 500;
 }
 .badge.ok {
-  background: rgba(52, 199, 89, 0.18);
-  color: #186a2a;
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
 }
 .badge.warn {
-  background: rgba(255, 149, 0, 0.18);
-  color: #b86700;
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
 }
 
 /* Provider radio cards */
@@ -385,18 +386,18 @@ h1 {
   cursor: pointer;
   padding: 14px 16px;
   border-radius: var(--radius-md);
-  border: 1.5px solid rgba(0, 0, 0, 0.06);
-  background: rgba(255, 255, 255, 0.35);
+  border: 1.5px solid var(--hairline);
+  background: var(--glass-bg-dim);
   transition: border-color 200ms ease, background 200ms ease, transform 120ms ease;
 }
 
 .provider:hover {
-  background: rgba(255, 255, 255, 0.55);
+  background: var(--glass-bg);
 }
 
 .provider.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  border-color: var(--brand);
+  background: var(--brand-soft);
 }
 
 .provider-label {
@@ -461,7 +462,7 @@ h1 {
   font-size: 16px;
 }
 .key-row .eye:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--glass-bg-dim);
 }
 
 .model-row {
@@ -486,27 +487,27 @@ h1 {
 
 .chip {
   appearance: none;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--hairline);
+  background: var(--glass-bg-dim);
   padding: 5px 11px;
   border-radius: 999px;
   cursor: pointer;
   font: inherit;
   font-size: 12px;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   color: var(--text-secondary);
   transition: background 200ms ease, color 200ms ease, border-color 200ms ease;
 }
 
 .chip:hover {
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--glass-bg);
   color: var(--text-primary);
 }
 
 .chip.active {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
+  background: var(--brand);
+  color: var(--brand-strong-text);
+  border-color: var(--brand);
 }
 
 .msg {
@@ -515,12 +516,12 @@ h1 {
   font-size: 14px;
 }
 .msg.ok {
-  background: rgba(52, 199, 89, 0.18);
-  color: #186a2a;
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
 }
 .msg.err {
-  background: rgba(255, 59, 48, 0.16);
-  color: #b8170c;
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
 }
 
 .actions {
