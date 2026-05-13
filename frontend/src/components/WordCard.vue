@@ -46,6 +46,7 @@ defineProps<{ word: WordBrief }>();
 }
 
 .text {
+  font-family: var(--font-serif);
   font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -54,7 +55,7 @@ defineProps<{ word: WordBrief }>();
 
 .phonetic {
   font-size: 13px;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
 }
 
 .translation {
@@ -76,10 +77,10 @@ defineProps<{ word: WordBrief }>();
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.12);
+  background: var(--hairline-strong);
 }
 
 .pip.on {
-  background: var(--accent);
+  background: var(--brand);
 }
 </style>
