@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { api, type WordPreview } from "../api";
+import { isSpeechSupported, speak } from "../composables/tts";
 
 // ─── Persisted text + direction ────────────────────────────────────────────
 type Direction = "en-to-zh" | "zh-to-en";
@@ -29,6 +30,7 @@ const english = ref(stored.en);
 const chinese = ref(stored.zh);
 const direction = ref<Direction>(loadDir());
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
+const ttsSupported = isSpeechSupported();
 
 watch([english, chinese], ([en, zh]) => {
   try {
@@ -71,7 +73,7 @@ const sourcePlaceholder = computed(() =>
     : "把中文粘进来——文章、邮件、想翻成英文的句子（最长 5000 字符）…"
 );
 
-// ─── Mode + selected word ──────────────────────────────────────────────────
+// ─── Mode + selected word + usage ──────────────────────────────────────────
 type Mode = "edit" | "read";
 const mode = ref<Mode>(sourceText.value ? "read" : "edit");
 const loading = ref(false);
@@ -90,7 +92,16 @@ interface SelectedWord {
   addError: string;
 }
 const selected = ref<SelectedWord | null>(null);
-const readContainer = ref<HTMLElement | null>(null);
+
+interface UsageState {
+  loading: boolean;
+  text: string;
+  error: string;
+}
+const usage = ref<UsageState | null>(null);
+
+let translateAbort: AbortController | null = null;
+let usageAbort: AbortController | null = null;
 
 // ─── Auto-translate debounce ───────────────────────────────────────────────
 const DEBOUNCE_MS = 1200;
@@ -159,10 +170,15 @@ const charCount = computed(() => sourceText.value.length);
 function setDirection(d: Direction) {
   if (d === direction.value) return;
   cancelDebounce();
+  if (translateAbort) translateAbort.abort();
+  if (usageAbort) usageAbort.abort();
+  translateAbort = null;
+  usageAbort = null;
   direction.value = d;
   english.value = "";
   chinese.value = "";
   selected.value = null;
+  usage.value = null;
   mode.value = "edit";
   lastTranslatedText = "";
   error.value = "";
@@ -174,24 +190,38 @@ async function doTranslate() {
   cancelDebounce();
   const text = sourceText.value.trim();
   if (!text || loading.value) return;
+  if (translateAbort) translateAbort.abort();
+  translateAbort = new AbortController();
+
   const textareaFocused = document.activeElement === textareaRef.value;
   const targetLang = direction.value === "en-to-zh" ? "zh" : "en";
   loading.value = true;
   error.value = "";
-  try {
-    const res = await api.translateText(text, targetLang);
-    setTarget(res.translation);
+  setTarget("");
+
+  let accumulated = "";
+  await api.translateTextStream(
+    text,
+    targetLang,
+    (delta) => {
+      accumulated += delta;
+      setTarget(accumulated);
+    },
+    (msg) => {
+      error.value = msg;
+    },
+    translateAbort.signal,
+  );
+
+  loading.value = false;
+  if (!error.value && accumulated) {
     lastTranslatedText = text;
     if (sourceText.value.trim() === text && !textareaFocused) {
       mode.value = "read";
     }
-  } catch (e: any) {
-    error.value = e.message || "翻译失败";
-  } finally {
-    loading.value = false;
-    if (sourceText.value.trim() && sourceText.value.trim() !== lastTranslatedText.trim()) {
-      scheduleTranslate(false);
-    }
+  }
+  if (sourceText.value.trim() && sourceText.value.trim() !== lastTranslatedText.trim()) {
+    scheduleTranslate(false);
   }
 }
 
@@ -217,14 +247,24 @@ function pasteExample() {
 }
 
 // ─── Word selection (en→zh only) ───────────────────────────────────────────
-async function onWordClick(event: MouseEvent, word: string) {
+function onWordClick(event: MouseEvent, word: string) {
   if (direction.value !== "en-to-zh") return;
   event.stopPropagation();
+
   selected.value = {
     text: word, loading: true, found: false,
     phonetic: "", pos: "", translation: "",
     alreadySaved: false, adding: false, addError: "",
   };
+  usage.value = { loading: true, text: "", error: "" };
+
+  if (ttsSupported) speak(word);
+
+  loadPreview(word);
+  loadUsage(word);
+}
+
+async function loadPreview(word: string) {
   try {
     const data: WordPreview = await api.previewWord(word);
     if (!selected.value || selected.value.text !== word) return;
@@ -238,9 +278,45 @@ async function onWordClick(event: MouseEvent, word: string) {
       selected.value = { ...selected.value, loading: false, found: false };
     }
   } catch {
-    if (selected.value) selected.value = { ...selected.value, loading: false, found: false };
+    if (selected.value && selected.value.text === word) {
+      selected.value = { ...selected.value, loading: false, found: false };
+    }
   }
 }
+
+async function loadUsage(word: string) {
+  if (usageAbort) usageAbort.abort();
+  usageAbort = new AbortController();
+  let accumulated = "";
+  await api.wordUsageStream(
+    word,
+    (delta) => {
+      accumulated += delta;
+      if (selected.value?.text === word && usage.value) {
+        usage.value = { ...usage.value, text: accumulated };
+      }
+    },
+    (msg) => {
+      if (selected.value?.text === word && usage.value) {
+        usage.value = { ...usage.value, loading: false, error: msg };
+      }
+    },
+    usageAbort.signal,
+  );
+  if (selected.value?.text === word && usage.value) {
+    usage.value = { ...usage.value, loading: false };
+  }
+}
+
+const usageSections = computed(() => {
+  const t = usage.value?.text || "";
+  const usageMatch = t.match(/【用法】([\s\S]*?)(?=【记忆方法】|$)/);
+  const memoMatch = t.match(/【记忆方法】([\s\S]*?)$/);
+  return {
+    usage: usageMatch ? usageMatch[1].trim() : "",
+    memo: memoMatch ? memoMatch[1].trim() : "",
+  };
+});
 
 async function addSelectedWord() {
   if (!selected.value || selected.value.adding) return;
@@ -260,7 +336,10 @@ async function addSelectedWord() {
 }
 
 function closeSelected() {
+  if (usageAbort) usageAbort.abort();
+  usageAbort = null;
   selected.value = null;
+  usage.value = null;
 }
 
 function onKey(e: KeyboardEvent) {
@@ -272,6 +351,8 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   cancelDebounce();
+  if (translateAbort) translateAbort.abort();
+  if (usageAbort) usageAbort.abort();
   document.removeEventListener("keydown", onKey);
 });
 </script>
@@ -327,9 +408,13 @@ onBeforeUnmount(() => {
           <span class="pane-label">{{ sourceLabel }}</span>
           <span class="pane-meta tertiary">
             <template v-if="wordCount">{{ wordCount }} {{ direction === 'en-to-zh' ? '词' : '字' }} · </template>{{ charCount }} 字符
-            <span v-if="mode === 'read' && direction === 'en-to-zh'" class="hint-tag">点词加入 · 点空白处编辑</span>
-            <span v-else-if="mode === 'read'" class="hint-tag">点任意位置编辑</span>
           </span>
+          <button
+            v-if="mode === 'read'"
+            class="edit-btn"
+            @click="enterEditMode"
+            title="返回编辑"
+          >✏️ 编辑</button>
         </div>
 
         <textarea
@@ -345,26 +430,23 @@ onBeforeUnmount(() => {
         <!-- en→zh: clickable word reading -->
         <div
           v-else-if="direction === 'en-to-zh'"
-          ref="readContainer"
           class="reading"
-          @click="enterEditMode"
         >
           <template v-for="(t, i) in tokens" :key="i">
             <span
               v-if="t.kind === 'word'"
               class="w"
               :class="{ active: selected?.text === t.text }"
-              @click.stop="onWordClick($event, t.text)"
+              @click="onWordClick($event, t.text)"
             >{{ t.text }}</span>
             <span v-else class="gap">{{ t.text }}</span>
           </template>
         </div>
 
-        <!-- zh→en: plain text reading, no spans -->
+        <!-- zh→en: plain text reading -->
         <div
           v-else
           class="reading reading-plain"
-          @click="enterEditMode"
         >{{ chinese }}</div>
       </section>
 
@@ -383,7 +465,9 @@ onBeforeUnmount(() => {
           <div class="skeleton-line" style="width: 64%"></div>
         </div>
 
-        <div v-else-if="targetText" class="target" :class="{ stale: loading }">{{ targetText }}</div>
+        <div v-else-if="targetText" class="target">
+          {{ targetText }}<span v-if="loading" class="stream-cursor" />
+        </div>
 
         <div v-else class="empty">
           <div class="empty-emoji">🌐</div>
@@ -398,59 +482,105 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <!-- Bottom word panel — en→zh only -->
-    <section v-if="direction === 'en-to-zh'" class="word-panel glass">
-      <div v-if="!selected" class="wp-empty tertiary">
-        <span class="wp-hint-emoji">🔎</span>
-        点任意英文单词查看读法和释义
-      </div>
+    <!-- Bottom row — en→zh only, two equal columns -->
+    <div v-if="direction === 'en-to-zh'" class="bottom">
+      <!-- LEFT · word panel -->
+      <section class="word-panel glass">
+        <div v-if="!selected" class="wp-empty tertiary">
+          <span class="wp-hint-emoji">🔎</span>
+          点任意英文单词查看读法和释义
+        </div>
 
-      <div v-else-if="selected.loading" class="wp-loading muted">
-        查询「{{ selected.text }}」…
-      </div>
+        <div v-else-if="selected.loading" class="wp-loading muted">
+          查询「{{ selected.text }}」…
+        </div>
 
-      <div v-else-if="selected.found" class="wp-detail">
-        <div class="wp-head">
-          <span class="wp-word">{{ selected.text }}</span>
-          <span v-if="selected.phonetic" class="wp-phon">{{ selected.phonetic }}</span>
-          <span v-if="selected.pos" class="wp-pos">{{ selected.pos }}</span>
+        <div v-else-if="selected.found" class="wp-detail">
+          <div class="wp-head">
+            <span class="wp-word">{{ selected.text }}</span>
+            <button
+              v-if="ttsSupported"
+              class="wp-tts"
+              @click="speak(selected.text)"
+              title="重播"
+            >🔊</button>
+            <span v-if="selected.phonetic" class="wp-phon">{{ selected.phonetic }}</span>
+            <span v-if="selected.pos" class="wp-pos">{{ selected.pos }}</span>
+          </div>
+          <div class="wp-trans">{{ selected.translation }}</div>
+          <div class="wp-actions">
+            <span v-if="selected.alreadySaved" class="wp-saved">✓ 已在单词库</span>
+            <button
+              v-else
+              class="btn btn-primary wp-add-btn"
+              :disabled="selected.adding"
+              @click="addSelectedWord"
+            >
+              {{ selected.adding ? "添加中…" : "+ 加入单词库" }}
+            </button>
+            <button class="btn btn-ghost wp-close-btn" @click="closeSelected">关闭</button>
+          </div>
+          <div v-if="selected.addError" class="wp-error">{{ selected.addError }}</div>
         </div>
-        <div class="wp-trans">{{ selected.translation }}</div>
-        <div class="wp-actions">
-          <span v-if="selected.alreadySaved" class="wp-saved">✓ 已在单词库</span>
-          <button
-            v-else
-            class="btn btn-primary"
-            :disabled="selected.adding"
-            @click="addSelectedWord"
-          >
-            {{ selected.adding ? "添加中…" : "+ 加入单词库" }}
-          </button>
-          <button class="btn btn-ghost wp-close-btn" @click="closeSelected">关闭</button>
-        </div>
-        <div v-if="selected.addError" class="wp-error">{{ selected.addError }}</div>
-      </div>
 
-      <div v-else class="wp-not-found">
-        <div class="wp-head">
-          <span class="wp-word">{{ selected.text }}</span>
+        <div v-else class="wp-not-found">
+          <div class="wp-head">
+            <span class="wp-word">{{ selected.text }}</span>
+            <button
+              v-if="ttsSupported"
+              class="wp-tts"
+              @click="speak(selected.text)"
+              title="重播"
+            >🔊</button>
+          </div>
+          <div class="muted small">
+            本地词典没收录这个词。配置了 AI 的话可以直接「加入单词库」让 AI 兜底翻译。
+          </div>
+          <div class="wp-actions">
+            <button
+              class="btn btn-primary wp-add-btn"
+              :disabled="selected.adding"
+              @click="addSelectedWord"
+            >
+              {{ selected.adding ? "添加中…" : "+ 加入单词库" }}
+            </button>
+            <button class="btn btn-ghost wp-close-btn" @click="closeSelected">关闭</button>
+          </div>
+          <div v-if="selected.addError" class="wp-error">{{ selected.addError }}</div>
         </div>
-        <div class="muted small">
-          本地词典没收录这个词。配置了 AI 的话可以直接「加入单词库」让 AI 兜底翻译。
+      </section>
+
+      <!-- RIGHT · AI usage + memory panel -->
+      <section class="usage-panel glass">
+        <div class="up-head">
+          <span class="up-label">💡 AI 用法 &amp; 记忆法</span>
+          <span v-if="usage?.loading" class="up-dot" />
         </div>
-        <div class="wp-actions">
-          <button
-            class="btn btn-primary"
-            :disabled="selected.adding"
-            @click="addSelectedWord"
-          >
-            {{ selected.adding ? "添加中…" : "+ 加入单词库" }}
-          </button>
-          <button class="btn btn-ghost wp-close-btn" @click="closeSelected">关闭</button>
+
+        <div v-if="!selected" class="up-empty tertiary small">
+          点单词后，这里会出现这个词的用法解释和记忆方法
         </div>
-        <div v-if="selected.addError" class="wp-error">{{ selected.addError }}</div>
-      </div>
-    </section>
+
+        <div v-else-if="usage?.loading && !usage.text" class="up-loading muted">
+          AI 生成中…
+        </div>
+
+        <div v-else-if="usage?.error" class="wp-error">
+          {{ usage.error }}
+        </div>
+
+        <template v-else-if="usage">
+          <div v-if="usageSections.usage" class="up-section">
+            <h4>用法说明</h4>
+            <div class="up-body">{{ usageSections.usage }}</div>
+          </div>
+          <div v-if="usageSections.memo" class="up-section">
+            <h4>记忆方法</h4>
+            <div class="up-body">{{ usageSections.memo }}</div>
+          </div>
+        </template>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -630,7 +760,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-  min-height: 380px;
+  min-height: 360px;
 }
 
 .pane-head {
@@ -659,15 +789,21 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
-.hint-tag {
-  font-size: 11px;
-  color: var(--brand);
-  background: var(--brand-soft);
-  padding: 2px 8px;
+.edit-btn {
+  appearance: none;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  padding: 3px 11px;
   border-radius: 999px;
-  font-weight: 600;
-  letter-spacing: 0;
-  text-transform: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 150ms, color 150ms;
+}
+.edit-btn:hover {
+  background: var(--brand-soft);
+  color: var(--brand);
 }
 
 /* ─── Textarea ────────────────────────────────────── */
@@ -707,8 +843,8 @@ onBeforeUnmount(() => {
 .w {
   cursor: pointer;
   border-radius: 4px;
-  padding: 0 1px;
-  margin: 0 -1px;
+  padding: 0 2px;
+  margin: 0 -2px;
   transition: background 100ms ease, color 100ms ease;
 }
 .w:hover {
@@ -735,11 +871,19 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-y: auto;
-  transition: opacity 200ms ease;
 }
 
-.target.stale {
-  opacity: 0.45;
+.stream-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 16px;
+  background: var(--brand);
+  vertical-align: -3px;
+  margin-left: 1px;
+  animation: blink 1s steps(2) infinite;
+}
+@keyframes blink {
+  50% { opacity: 0.2; }
 }
 
 .skeleton {
@@ -803,17 +947,27 @@ onBeforeUnmount(() => {
 }
 .link-btn:hover { text-decoration-color: var(--brand); }
 
-/* ─── Bottom word panel ──────────────────────────── */
-.word-panel {
-  padding: 14px 20px;
-  border-left: 3px solid var(--brand);
-  min-height: 76px;
+/* ─── Bottom row · two equal columns, fixed min-height ── */
+.bottom {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  min-height: 180px;
+}
+
+.word-panel,
+.usage-panel {
+  padding: 14px 18px;
+  min-height: 180px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  justify-content: center;
 }
 
+.word-panel { border-left: 3px solid var(--brand); }
+.usage-panel { border-left: 3px solid var(--accent); }
+
+/* ─── Word panel content ─────────────────────────── */
 .wp-empty {
   display: flex;
   align-items: center;
@@ -849,6 +1003,24 @@ onBeforeUnmount(() => {
   color: var(--text-primary);
 }
 
+.wp-tts {
+  appearance: none;
+  border: none;
+  background: var(--brand-soft);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: var(--brand);
+  font-size: 13px;
+  cursor: pointer;
+  align-self: center;
+  transition: transform 200ms, background 200ms;
+}
+.wp-tts:hover {
+  background: color-mix(in srgb, var(--brand) 28%, transparent);
+  transform: scale(1.08);
+}
+
 .wp-phon {
   font-family: var(--font-mono);
   font-size: 13px;
@@ -878,6 +1050,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  margin-top: auto;
   padding-top: 4px;
 }
 
@@ -887,15 +1060,15 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.wp-close-btn {
-  padding: 6px 14px;
-  font-size: 13px;
-}
-
-.btn-primary {
+.wp-add-btn {
   padding: 6px 16px;
   font-size: 13px;
   font-weight: 600;
+}
+
+.wp-close-btn {
+  padding: 6px 14px;
+  font-size: 13px;
 }
 
 .wp-error {
@@ -903,10 +1076,67 @@ onBeforeUnmount(() => {
   color: var(--danger);
 }
 
+/* ─── Usage panel content ────────────────────────── */
+.up-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 2px;
+}
+
+.up-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.up-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: blink 1.4s infinite;
+}
+
+.up-empty {
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+.up-loading {
+  padding: 8px 0;
+  font-size: 13px;
+}
+
+.up-section {
+  margin-top: 4px;
+}
+
+.up-section h4 {
+  margin: 0 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.up-body {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--text-primary);
+  word-wrap: break-word;
+}
+
 /* ─── Responsive ─────────────────────────────────── */
 @media (max-width: 1000px) {
   .panes { grid-template-columns: 1fr; }
   .pane { min-height: 260px; }
+  .bottom { grid-template-columns: 1fr; }
   .page-head { flex-direction: column; align-items: stretch; }
   .dir-toggle { align-self: flex-start; }
 }
