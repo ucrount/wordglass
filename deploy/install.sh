@@ -199,6 +199,14 @@ if [[ ! -f "$NGINX_FILE" ]]; then
   SERVER_NAME=${SERVER_NAME:-$PUBLIC_IP}
   sed "s|SERVER_NAME|$SERVER_NAME|g" "$APP_DIR/deploy/nginx.conf" > "$NGINX_FILE"
   c_green "    ✓ nginx site file created for $SERVER_NAME"
+else
+  # On updates: refresh nginx config from repo so the user picks up changes
+  # (e.g. SSE buffering fixes). Preserve the existing server_name.
+  EXISTING_NAME=$(grep -E '^\s*server_name' "$NGINX_FILE" | head -1 | awk '{print $2}' | tr -d ';')
+  if [[ -n "$EXISTING_NAME" ]]; then
+    sed "s|SERVER_NAME|$EXISTING_NAME|g" "$APP_DIR/deploy/nginx.conf" > "$NGINX_FILE"
+    c_green "    ✓ nginx site file refreshed (server_name preserved: $EXISTING_NAME)"
+  fi
 fi
 
 # Always (re)ensure the site is enabled and default is gone — idempotent.

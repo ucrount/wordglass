@@ -85,4 +85,12 @@ async def translate_stream(payload: TranslateIn, db: Session = Depends(get_db)):
         except ProviderError as e:
             yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # tell nginx not to buffer
+            "Connection": "keep-alive",
+        },
+    )
