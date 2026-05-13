@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
+import re
+
 from sqlalchemy.orm import Session
 
 from .config import settings as env_settings
 from .models import Setting
+
+
+_USERNAME_RE = re.compile(r"^[a-z0-9_]{3,20}$")
+
+
+def normalize_username(raw: str) -> str:
+    """Lowercase + trim. Returns '' if format invalid."""
+    s = (raw or "").strip().lower()
+    return s if _USERNAME_RE.match(s) else ""
 
 
 def _ensure_row(db: Session) -> Setting:
