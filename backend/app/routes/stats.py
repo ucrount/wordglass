@@ -53,3 +53,47 @@ def heatmap(
         by_day[str(d)] = by_day.get(str(d), 0) + c
 
     return {"days": by_day, "since": since.date().isoformat()}
+
+
+@router.get("/weak-words")
+def weak_words(
+    limit: int = Query(default=5, ge=1, le=20),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Return top-N words the user has reviewed but gets wrong most often.
+
+    Sort key:
+      1. wrong_count = review_count - correct_count, DESC
+      2. mastery, ASC
+      3. created_at, DESC (tie-breaker, newer first)
+
+    Only words with review_count > 0 are considered — never-reviewed words
+    aren't "weak", they're just "未练".
+    """
+    rows = (
+        db.query(Word)
+        .filter(Word.user_id == user.id, Word.review_count > 0)
+        .order_by(
+            (Word.review_count - Word.correct_count).desc(),
+            Word.mastery.asc(),
+            Word.created_at.desc(),
+        )
+        .limit(limit)
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": w.id,
+                "text": w.text,
+                "translation": w.translation or "",
+                "phonetic": w.phonetic or "",
+                "mastery": w.mastery,
+                "review_count": w.review_count,
+                "correct_count": w.correct_count,
+                "wrong_count": (w.review_count or 0) - (w.correct_count or 0),
+            }
+            for w in rows
+        ]
+    }
