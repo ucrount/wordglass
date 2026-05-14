@@ -1,61 +1,123 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { api, type CategoriesOut, type WordBrief } from "../api";
-import WordCard from "../components/WordCard.vue";
 import WordDetail from "../components/WordDetail.vue";
 
-const words = ref<WordBrief[]>([]);
-const loading = ref(false);
-const error = ref("");
+type View = "tiles" | "category" | "search";
 
-const cats = ref<CategoriesOut>({ counts: {}, order: [] });
-const catsLoading = ref(false);
-const recategorizing = ref(false);
-const recatMessage = ref("");
-
-const q = ref("");
-const selectedCategory = ref<string | null>(null); // null = 全部
-const selectedMastery = ref<number | null>(null);  // null = 全部
-
-const detailId = ref<number | null>(null);
-
-const MASTERY_OPTIONS: { value: number | null; label: string }[] = [
-  { value: null, label: "全部" },
-  { value: 0, label: "未学" },
-  { value: 1, label: "1" },
-  { value: 2, label: "2" },
-  { value: 3, label: "3" },
-  { value: 4, label: "4" },
-  { value: 5, label: "已掌握" },
-];
-
-const totalCount = computed(() =>
-  Object.values(cats.value.counts).reduce((a, b) => a + b, 0)
-);
-
-const uncategorizedCount = computed(() => cats.value.counts["未分类"] ?? 0);
-
-async function refreshCategories() {
-  catsLoading.value = true;
-  try {
-    cats.value = await api.listCategories();
-  } catch {
-    /* ignore */
-  } finally {
-    catsLoading.value = false;
-  }
+interface CategoryBucket {
+  name: string;
+  total: number;
+  words: WordBrief[];
+  avgMastery: number;
+  isUncategorized: boolean;
 }
 
-async function refreshWords() {
+const router = useRouter();
+
+const allWords = ref<WordBrief[]>([]);
+const cats = ref<CategoriesOut>({ counts: {}, order: [] });
+const loading = ref(false);
+const error = ref("");
+const message = ref("");
+const recategorizing = ref(false);
+
+const q = ref("");
+const selectedCategory = ref<string | null>(null);
+const detailId = ref<number | null>(null);
+
+const view = computed<View>(() => {
+  if (q.value.trim()) return "search";
+  if (selectedCategory.value !== null) return "category";
+  return "tiles";
+});
+
+function toBucket(name: string, words: WordBrief[], isUncat: boolean): CategoryBucket {
+  const sorted = [...words].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+  const avg =
+    words.reduce((s, w) => s + (w.mastery || 0), 0) / Math.max(1, words.length);
+  return {
+    name,
+    total: words.length,
+    words: sorted,
+    avgMastery: avg,
+    isUncategorized: isUncat,
+  };
+}
+
+const buckets = computed<CategoryBucket[]>(() => {
+  const byCat: Record<string, WordBrief[]> = {};
+  for (const w of allWords.value) {
+    const cat = w.category || "未分类";
+    if (!byCat[cat]) byCat[cat] = [];
+    byCat[cat].push(w);
+  }
+  const result: CategoryBucket[] = [];
+  if ((byCat["未分类"] || []).length > 0) {
+    result.push(toBucket("未分类", byCat["未分类"], true));
+  }
+  for (const name of cats.value.order) {
+    if (name === "未分类") continue;
+    const words = byCat[name] || [];
+    if (words.length === 0) continue;
+    result.push(toBucket(name, words, false));
+  }
+  // Fallback: words whose category isn't in cats.order (shouldn't happen, but be safe)
+  for (const [name, words] of Object.entries(byCat)) {
+    if (name === "未分类") continue;
+    if (cats.value.order.includes(name)) continue;
+    if (words.length === 0) continue;
+    result.push(toBucket(name, words, false));
+  }
+  return result;
+});
+
+const selectedBucket = computed<CategoryBucket | undefined>(() =>
+  selectedCategory.value
+    ? buckets.value.find((b) => b.name === selectedCategory.value)
+    : undefined
+);
+
+const categoryWords = computed<WordBrief[]>(() =>
+  selectedBucket.value ? selectedBucket.value.words : []
+);
+
+const searchResults = computed<WordBrief[]>(() => {
+  const term = q.value.trim().toLowerCase();
+  if (!term) return [];
+  return allWords.value.filter(
+    (w) =>
+      w.text.toLowerCase().includes(term) ||
+      (w.translation || "").toLowerCase().includes(term)
+  );
+});
+
+const totalCount = computed(() => allWords.value.length);
+const masteredCount = computed(
+  () => allWords.value.filter((w) => (w.mastery || 0) >= 5).length
+);
+const uncategorizedCount = computed(
+  () => allWords.value.filter((w) => !w.category).length
+);
+
+function masteryPips(avg: number): boolean[] {
+  const filled = Math.round(avg);
+  return [0, 1, 2, 3, 4].map((i) => i < filled);
+}
+
+async function loadAll() {
   loading.value = true;
   error.value = "";
   try {
-    words.value = await api.listWords({
-      q: q.value.trim() || undefined,
-      category: selectedCategory.value ?? undefined,
-      mastery: selectedMastery.value ?? undefined,
-      limit: 200,
-    });
+    const [list, c] = await Promise.all([
+      api.listWords({ limit: 500 }),
+      api.listCategories(),
+    ]);
+    allWords.value = list;
+    cats.value = c;
   } catch (e: any) {
     error.value = e.message || "加载失败";
   } finally {
@@ -63,15 +125,13 @@ async function refreshWords() {
   }
 }
 
-let searchTimer: ReturnType<typeof setTimeout> | null = null;
-watch(q, () => {
-  if (searchTimer) clearTimeout(searchTimer);
-  searchTimer = setTimeout(refreshWords, 200);
-});
-watch([selectedCategory, selectedMastery], refreshWords);
-
-function selectCategory(name: string | null) {
+function enterCategory(name: string) {
   selectedCategory.value = name;
+  q.value = "";
+}
+
+function exitCategory() {
+  selectedCategory.value = null;
 }
 
 function openDetail(id: number) {
@@ -83,12 +143,22 @@ function closeDetail() {
 }
 
 async function onDeleted(id: number) {
-  words.value = words.value.filter((w) => w.id !== id);
+  allWords.value = allWords.value.filter((w) => w.id !== id);
   detailId.value = null;
-  await refreshCategories();
+  try {
+    cats.value = await api.listCategories();
+  } catch {
+    /* keep stale order */
+  }
 }
 
-async function handleRecategorize() {
+function practiceCategory(b: CategoryBucket) {
+  if (b.total === 0) return;
+  const ids = b.words.map((w) => w.id).join(",");
+  router.push({ path: "/practice", query: { word_ids: ids } });
+}
+
+async function recategorize() {
   if (recategorizing.value) return;
   if (uncategorizedCount.value === 0) return;
   if (
@@ -98,22 +168,22 @@ async function handleRecategorize() {
   )
     return;
   recategorizing.value = true;
-  recatMessage.value = "";
+  message.value = "";
   try {
     const res = await api.recategorize();
-    recatMessage.value = `已分类 ${res.updated} / ${res.total} 个单词`;
-    await Promise.all([refreshCategories(), refreshWords()]);
+    message.value = `已分类 ${res.updated} / ${res.total} 个单词`;
+    await loadAll();
   } catch (e: any) {
-    recatMessage.value = e.message || "分类失败";
+    message.value = e.message || "分类失败";
   } finally {
     recategorizing.value = false;
-    setTimeout(() => (recatMessage.value = ""), 4000);
+    setTimeout(() => {
+      message.value = "";
+    }, 4000);
   }
 }
 
-onMounted(async () => {
-  await Promise.all([refreshCategories(), refreshWords()]);
-});
+onMounted(loadAll);
 </script>
 
 <template>
@@ -121,100 +191,192 @@ onMounted(async () => {
     <header class="page-head">
       <div>
         <h1>单词库</h1>
-        <p class="muted small">{{ totalCount }} 个单词 · 按分类与掌握度筛选</p>
+        <p class="muted small">
+          {{ totalCount }} 个 · {{ masteredCount }} 已掌握
+          <span v-if="uncategorizedCount > 0" class="warn-chip">
+            · {{ uncategorizedCount }} 未分类
+          </span>
+        </p>
       </div>
-      <button
-        class="btn btn-ghost recat-btn"
-        :disabled="recategorizing || uncategorizedCount === 0"
-        :title="uncategorizedCount === 0 ? '所有单词都已分类' : ''"
-        @click="handleRecategorize"
-      >
-        {{
-          recategorizing
-            ? "AI 分类中…"
-            : uncategorizedCount > 0
-              ? `🤖 AI 分类 ${uncategorizedCount} 个未分类`
-              : "✓ 已全部分类"
-        }}
-      </button>
     </header>
 
-    <div v-if="recatMessage" class="recat-toast glass-dim">{{ recatMessage }}</div>
+    <div class="search-bar glass">
+      <span class="search-icon">🔎</span>
+      <input
+        v-model="q"
+        class="search-input"
+        placeholder="搜索单词或翻译…"
+        type="search"
+      />
+      <button
+        v-if="view === 'category'"
+        class="back-btn"
+        @click="exitCategory"
+      >
+        ← 返回所有分类
+      </button>
+      <span v-else-if="view === 'tiles'" class="cta-summary">
+        {{ buckets.length }} 个分类
+      </span>
+    </div>
 
-    <div class="body-grid">
-      <!-- ─── LEFT: category rail ──────────────────────── -->
-      <aside class="cat-rail glass">
-        <h3 class="rail-title">分类</h3>
-        <button
-          class="cat-item"
-          :class="{ active: selectedCategory == null }"
-          @click="selectCategory(null)"
-        >
-          <span class="cat-name">全部</span>
-          <span class="cat-count">{{ totalCount }}</span>
-        </button>
-        <button
-          v-for="name in cats.order"
-          :key="name"
-          class="cat-item"
-          :class="{
-            active: selectedCategory === name,
-            empty: (cats.counts[name] ?? 0) === 0,
-            uncat: name === '未分类',
-          }"
-          @click="selectCategory(name)"
-        >
-          <span class="cat-name">{{ name }}</span>
-          <span class="cat-count">{{ cats.counts[name] ?? 0 }}</span>
-        </button>
-      </aside>
+    <div v-if="error" class="state error glass-dim">
+      {{ error }}
+      <button class="btn btn-ghost" style="margin-left: 12px" @click="loadAll">
+        重试
+      </button>
+    </div>
 
-      <!-- ─── RIGHT: search + word grid ────────────────── -->
-      <section class="main-col">
-        <div class="toolbar">
-          <div class="search-wrap">
-            <span class="search-icon">🔎</span>
-            <input
-              v-model="q"
-              class="input search-input"
-              placeholder="搜索单词或翻译…"
-              type="search"
-            />
+    <div v-else-if="loading && allWords.length === 0" class="state muted glass-dim">
+      加载中…
+    </div>
+
+    <div v-else-if="totalCount === 0" class="state muted glass-dim">
+      <p>词库还是空的</p>
+      <p class="tertiary small">去主页 / 阅读翻译 里加几个单词吧</p>
+    </div>
+
+    <!-- ─── Content area ──────────────────────────────── -->
+    <div v-else class="content-area">
+      <!-- ═════ Tiles view ═════ -->
+      <div v-if="view === 'tiles'" class="tile-grid">
+        <button
+          v-for="b in buckets"
+          :key="b.name"
+          class="tile glass"
+          :class="{ uncat: b.isUncategorized }"
+          @click="enterCategory(b.name)"
+        >
+          <div class="tile-head">
+            <span class="tile-name">
+              <span v-if="b.isUncategorized" class="uncat-dot">•</span>{{ b.name }}
+            </span>
+            <span class="tile-count">{{ b.total }} 个</span>
           </div>
-          <div class="mastery-chips">
-            <button
-              v-for="opt in MASTERY_OPTIONS"
-              :key="opt.label"
-              class="m-chip"
-              :class="{ active: selectedMastery === opt.value }"
-              @click="selectedMastery = opt.value"
+          <div class="tile-words">
+            <span
+              v-for="w in b.words.slice(0, 4)"
+              :key="w.id"
+              class="tile-word"
+            >{{ w.text }}</span>
+            <span v-if="b.total > 4" class="tile-more">+{{ b.total - 4 }}</span>
+          </div>
+          <div class="tile-foot">
+            <span
+              v-if="b.isUncategorized"
+              class="tile-action accent"
+              :class="{ disabled: recategorizing }"
+              @click.stop="recategorize"
+            >{{ recategorizing ? "AI 分类中…" : "🤖 AI 分类" }}</span>
+            <span
+              v-else
+              class="tile-action"
+              @click.stop="practiceCategory(b)"
+            >▶ 练这 {{ b.total }} 个</span>
+            <div
+              class="tile-pips"
+              :title="`平均掌握度 ${b.avgMastery.toFixed(1)} / 5`"
             >
-              {{ opt.label }}
-            </button>
+              <span
+                v-for="(on, i) in masteryPips(b.avgMastery)"
+                :key="i"
+                class="p"
+                :class="{ on }"
+              />
+            </div>
           </div>
+        </button>
+      </div>
+
+      <!-- ═════ Category view ═════ -->
+      <div v-else-if="view === 'category'" class="cat-view">
+        <div class="cat-view-head">
+          <h2>
+            <span v-if="selectedBucket?.isUncategorized" class="uncat-dot">•</span>
+            {{ selectedCategory }}
+          </h2>
+          <span class="muted small">{{ categoryWords.length }} 个</span>
+          <button
+            v-if="categoryWords.length > 0 && !selectedBucket?.isUncategorized"
+            class="cat-prac"
+            @click="practiceCategory(selectedBucket!)"
+          >
+            ▶ 练这 {{ categoryWords.length }} 个
+          </button>
+          <button
+            v-else-if="selectedBucket?.isUncategorized && categoryWords.length > 0"
+            class="cat-prac accent"
+            :disabled="recategorizing"
+            @click="recategorize"
+          >
+            {{ recategorizing ? "AI 分类中…" : "🤖 AI 分类这些" }}
+          </button>
         </div>
 
-        <div v-if="error" class="state error glass-dim">{{ error }}</div>
-        <div v-else-if="loading && words.length === 0" class="state muted glass-dim">
-          加载中…
-        </div>
-        <div v-else-if="words.length === 0" class="state muted glass-dim">
-          <p>没有匹配的单词</p>
-          <p class="tertiary small">试试别的搜索词或清掉筛选条件</p>
+        <div v-if="categoryWords.length === 0" class="state muted glass-dim">
+          这个分类暂时没有单词
         </div>
         <div v-else class="word-grid">
           <div
-            v-for="w in words"
+            v-for="w in categoryWords"
             :key="w.id"
-            class="word-cell"
+            class="word-row"
             @click="openDetail(w.id)"
           >
-            <WordCard :word="w" />
-            <span v-if="w.category" class="overlay-cat">{{ w.category }}</span>
+            <div class="row-text">
+              <div class="row-w">{{ w.text }}</div>
+              <div class="row-t">{{ w.translation || "（无翻译）" }}</div>
+            </div>
+            <div class="row-pips">
+              <span
+                v-for="(on, i) in masteryPips(w.mastery)"
+                :key="i"
+                class="p"
+                :class="{ on }"
+              />
+            </div>
           </div>
         </div>
-      </section>
+      </div>
+
+      <!-- ═════ Search view ═════ -->
+      <div v-else class="search-view">
+        <div class="search-result-head">
+          匹配到 <strong>{{ searchResults.length }}</strong> 个单词
+          <span v-if="searchResults.length === 0" class="muted small">
+            · 试试别的搜索词
+          </span>
+        </div>
+        <div v-if="searchResults.length > 0" class="word-grid">
+          <div
+            v-for="w in searchResults"
+            :key="w.id"
+            class="word-row"
+            @click="openDetail(w.id)"
+          >
+            <div class="row-text">
+              <div class="row-w">{{ w.text }}</div>
+              <div class="row-t">
+                {{ w.translation || "（无翻译）" }}
+                <span v-if="w.category" class="row-cat">· {{ w.category }}</span>
+              </div>
+            </div>
+            <div class="row-pips">
+              <span
+                v-for="(on, i) in masteryPips(w.mastery)"
+                :key="i"
+                class="p"
+                :class="{ on }"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
+
+    <Transition name="fade">
+      <div v-if="message" class="msg-toast glass-dim">{{ message }}</div>
+    </Transition>
 
     <WordDetail :word-id="detailId" @close="closeDetail" @deleted="onDeleted" />
   </div>
@@ -224,234 +386,398 @@ onMounted(async () => {
 .library {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  flex: 1;
+  gap: 18px;
+  height: calc(100vh - 68px);
   min-height: 0;
 }
 
+/* ─── Header ───────────────────────────────────────── */
 .page-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 16px;
+  gap: 14px;
   flex-shrink: 0;
 }
 .page-head h1 {
   font-family: var(--font-serif);
-  font-size: 22px;
+  font-size: 26px;
   font-weight: 700;
   letter-spacing: -0.02em;
   margin: 0;
 }
-.page-head p { margin: 2px 0 0; font-size: 13px; }
-.small { font-size: 12px; }
-
-.recat-btn {
-  padding: 8px 16px;
-  font-size: 13px;
-  white-space: nowrap;
-}
-.recat-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.recat-toast {
-  padding: 8px 14px;
-  border-radius: 999px;
-  font-size: 13px;
-  color: var(--brand);
-  align-self: flex-start;
-}
-
-.body-grid {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  gap: 18px;
-  flex: 1;
-  min-height: 0;
-}
-
-/* ─── Category rail ───────────────────────────────── */
-.cat-rail {
-  padding: 14px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  overflow-y: auto;
-  min-height: 0;
-}
-
-.rail-title {
-  margin: 4px 8px 8px;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+.page-head p {
+  margin: 4px 0 0;
+  font-size: 12px;
   color: var(--text-tertiary);
 }
-
-.cat-item {
-  appearance: none;
-  border: none;
-  background: transparent;
-  text-align: left;
-  padding: 8px 10px;
-  border-radius: 8px;
-  font: inherit;
-  font-size: 13px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  transition: background 150ms ease, color 150ms ease;
-}
-.cat-item:hover {
-  background: var(--glass-bg-dim);
-  color: var(--text-primary);
-}
-.cat-item.active {
-  background: var(--brand-soft);
-  color: var(--brand);
+.small { font-size: 12px; }
+.warn-chip {
+  color: var(--accent);
   font-weight: 600;
 }
-.cat-item.empty {
-  opacity: 0.5;
-}
-.cat-item.uncat .cat-name::before {
-  content: "• ";
-  color: var(--text-tertiary);
-}
 
-.cat-count {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-tertiary);
-  background: var(--glass-bg-dim);
-  padding: 1px 7px;
-  border-radius: 999px;
-  min-width: 24px;
-  text-align: center;
-}
-.cat-item.active .cat-count {
-  background: var(--brand);
-  color: #fff;
-}
-
-/* ─── Main column ─────────────────────────────────── */
-.main-col {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-  min-height: 0;
-}
-
-.toolbar {
+/* ─── Search bar ───────────────────────────────────── */
+.search-bar {
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
+  padding: 10px 18px;
   flex-shrink: 0;
 }
-
-.search-wrap {
-  position: relative;
-  flex: 1;
-  min-width: 220px;
-}
 .search-icon {
-  position: absolute;
-  left: 14px;
-  top: 50%;
-  transform: translateY(-50%);
   font-size: 14px;
-  pointer-events: none;
-  opacity: 0.6;
+  opacity: 0.5;
 }
 .search-input {
-  padding-left: 38px;
-  padding-top: 10px;
-  padding-bottom: 10px;
-  font-size: 14px;
-}
-
-.mastery-chips {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-
-.m-chip {
-  appearance: none;
-  border: 1px solid var(--hairline);
+  flex: 1;
   background: transparent;
-  padding: 5px 12px;
+  border: none;
+  font-size: 14px;
+  color: var(--text-primary);
+  outline: none;
+  padding: 6px 0;
+}
+.search-input::placeholder {
+  color: var(--text-tertiary);
+}
+.back-btn {
+  appearance: none;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg-dim);
+  padding: 5px 14px;
   border-radius: 999px;
   font: inherit;
   font-size: 12px;
-  color: var(--text-secondary);
+  font-weight: 600;
+  color: var(--brand);
   cursor: pointer;
-  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+  transition: background 150ms ease;
 }
-.m-chip:hover {
-  background: var(--glass-bg-dim);
-  color: var(--text-primary);
+.back-btn:hover {
+  background: var(--brand-soft);
 }
-.m-chip.active {
-  background: var(--brand);
-  color: #fff;
-  border-color: transparent;
+.cta-summary {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
-/* ─── Word grid ───────────────────────────────────── */
+/* ─── Content area (scrolls) ───────────────────────── */
+.content-area {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* ─── Tiles view ───────────────────────────────────── */
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  align-content: start;
+}
+
+.tile {
+  appearance: none;
+  border: 1px solid var(--glass-border);
+  text-align: left;
+  cursor: pointer;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  overflow: hidden;
+  transition:
+    background 200ms ease,
+    transform 120ms ease,
+    border-color 200ms ease;
+  font: inherit;
+  color: var(--text-primary);
+}
+.tile::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--brand) 6%, transparent),
+    transparent 60%
+  );
+  pointer-events: none;
+}
+.tile:hover {
+  background: var(--glass-bg-strong);
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--brand) 30%, var(--glass-border));
+}
+.tile.uncat {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--glass-border));
+}
+.tile.uncat::before {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent) 8%, transparent),
+    transparent 60%
+  );
+}
+
+.tile-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.tile-name {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  font-weight: 700;
+}
+.uncat-dot {
+  color: var(--accent);
+  margin-right: 4px;
+}
+.tile.uncat .tile-name {
+  color: var(--accent);
+}
+.tile-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.tile-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 22px;
+}
+.tile-word {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  padding: 2px 7px;
+  background: var(--glass-bg-dim);
+  border-radius: 4px;
+}
+.tile-more {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  padding: 2px 6px;
+  align-self: center;
+}
+
+.tile-foot {
+  display: flex;
+  align-items: center;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--hairline);
+  font-size: 11.5px;
+}
+.tile-action {
+  color: var(--brand);
+  font-weight: 600;
+  cursor: pointer;
+  transition: text-decoration 100ms ease;
+}
+.tile-action.accent {
+  color: var(--accent);
+}
+.tile-action.disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.tile-action:hover:not(.disabled) {
+  text-decoration: underline;
+}
+
+.tile-pips {
+  margin-left: auto;
+  display: flex;
+  gap: 2.5px;
+}
+.tile-pips .p {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--hairline-strong);
+}
+.tile-pips .p.on {
+  background: var(--brand);
+}
+
+/* ─── Category view ────────────────────────────────── */
+.cat-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.cat-view-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.cat-view-head h2 {
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.cat-prac {
+  margin-left: auto;
+  background: var(--brand-strong, var(--brand));
+  color: var(--brand-strong-text, #fff);
+  border: none;
+  padding: 7px 18px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 150ms ease;
+}
+.cat-prac:hover {
+  opacity: 0.9;
+}
+.cat-prac.accent {
+  background: var(--accent);
+}
+.cat-prac:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ─── Word grid + rows ─────────────────────────────── */
 .word-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px;
-  overflow-y: auto;
-  padding-right: 4px;
-  min-height: 0;
+  gap: 10px;
 }
-
-.word-cell {
-  position: relative;
+.word-row {
+  display: flex;
+  align-items: center;
+  padding: 11px 14px;
+  background: var(--glass-bg-dim);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  cursor: pointer;
+  gap: 10px;
+  transition: background 150ms ease, border-color 150ms ease;
 }
-
-.overlay-cat {
-  position: absolute;
-  top: 8px;
-  right: 8px;
+.word-row:hover {
+  background: var(--glass-bg);
+  border-color: color-mix(in srgb, var(--brand) 20%, var(--glass-border));
+}
+.row-text {
+  flex: 1;
+  min-width: 0;
+}
+.row-w {
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row-t {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row-cat {
   font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--brand-soft);
   color: var(--brand);
-  font-weight: 600;
-  pointer-events: none;
+  margin-left: 4px;
+}
+.row-pips {
+  display: flex;
+  gap: 2.5px;
+  flex-shrink: 0;
+}
+.row-pips .p {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--hairline-strong);
+}
+.row-pips .p.on {
+  background: var(--brand);
 }
 
+/* ─── Search view ──────────────────────────────────── */
+.search-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.search-result-head {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.search-result-head strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+/* ─── States ───────────────────────────────────────── */
 .state {
-  padding: 40px 20px;
+  padding: 36px 20px;
   text-align: center;
   border-radius: var(--radius-md);
 }
-.state.error { color: var(--danger); }
-.state p { margin: 0 0 4px; }
+.state.error {
+  color: var(--danger);
+}
+.state p {
+  margin: 0 0 4px;
+}
 
+/* ─── Toast ────────────────────────────────────────── */
+.msg-toast {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--brand);
+  z-index: 50;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+}
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 200ms ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* ─── Mobile ───────────────────────────────────────── */
 @media (max-width: 900px) {
-  .body-grid {
+  .library {
+    height: auto;
+    min-height: 0;
+  }
+  .content-area {
+    overflow: visible;
+  }
+  .tile-grid {
     grid-template-columns: 1fr;
   }
-  .cat-rail {
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding: 10px;
+  .word-grid {
+    grid-template-columns: 1fr;
   }
-  .rail-title { display: none; }
-  .cat-item { flex-shrink: 0; }
 }
 </style>
