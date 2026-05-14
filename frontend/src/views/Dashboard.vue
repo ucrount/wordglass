@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import { RouterLink } from "vue-router";
 import { api, type Stats, type WordBrief, type WordOut } from "../api";
 import AddBar from "../components/AddBar.vue";
@@ -24,7 +24,6 @@ async function refreshRecent() {
   try {
     const list = await api.listWords({ limit: 4 });
     recent.value = list;
-    // When user hasn't just added one, default the preview to the most recent word
     if (!lastAdded.value && list.length > 0) {
       try {
         lastAdded.value = await api.getWord(list[0].id);
@@ -40,9 +39,6 @@ async function refreshAll() {
   initialLoad.value = false;
 }
 
-// Poll a freshly-added word until background AI fills in category + examples,
-// or we hit the deadline (~15s). Local lookup returns instantly with category=""
-// and possibly empty examples; the backend's BackgroundTasks add them after.
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 function stopPolling() {
   if (pollTimer) {
@@ -87,43 +83,32 @@ onUnmounted(stopPolling);
 
 <template>
   <div class="dashboard">
-    <!-- Compact header -->
     <header class="page-head">
       <h1>主页</h1>
-      <p class="muted small">粘个英文单词，AI 立刻给翻译和 3 个不同语境的例句。</p>
+      <p class="muted small">粘个英文单词，AI 立刻翻译 + 3 个例句</p>
     </header>
 
-    <!-- Body grid — fills remaining viewport -->
     <div class="body-grid">
       <!-- ─── LEFT MAIN COLUMN ─────────────────────────── -->
       <div class="col-main">
         <AddBar @added="onAdded" class="addbar" />
 
-        <!-- Preview card — always shown, internal scroll for examples -->
+        <!-- Hero preview — flex: 1 fills vertical space -->
         <section class="preview glass-strong">
           <template v-if="lastAdded">
-            <div class="preview-head">
-              <div class="word-row">
-                <span class="word-text">{{ lastAdded.text }}</span>
-                <button
-                  v-if="ttsSupported"
-                  class="speaker"
-                  @click="speak(lastAdded.text)"
-                  title="朗读"
-                >🔊</button>
-                <span v-if="lastAdded.phonetic" class="phonetic">{{ lastAdded.phonetic }}</span>
-                <span v-if="lastAdded.pos" class="pos">{{ lastAdded.pos }}</span>
-              </div>
-              <RouterLink to="/practice" class="btn btn-primary practice-btn">
-                练这个 →
-              </RouterLink>
+            <div class="word-row">
+              <span class="word-text">{{ lastAdded.text }}</span>
+              <button
+                v-if="ttsSupported"
+                class="speaker"
+                @click="speak(lastAdded.text)"
+                title="朗读"
+              >🔊</button>
+              <span v-if="lastAdded.phonetic" class="phonetic">{{ lastAdded.phonetic }}</span>
+              <span v-if="lastAdded.pos" class="pos">{{ lastAdded.pos }}</span>
             </div>
             <div class="translation">{{ lastAdded.translation || "（无翻译）" }}</div>
 
-            <div class="examples-head tertiary">
-              <span class="dot-purple" />
-              {{ lastAdded.examples.length }} 个不同语境的例句
-            </div>
             <div class="examples">
               <div
                 v-for="(ex, i) in lastAdded.examples"
@@ -133,17 +118,19 @@ onUnmounted(stopPolling);
                 <div class="example-num">{{ i + 1 }}</div>
                 <div class="example-body">
                   <div class="example-en">{{ ex.en }}</div>
-                  <div v-if="ex.zh" class="example-zh tertiary">{{ ex.zh }}</div>
+                  <div v-if="ex.zh" class="example-zh">{{ ex.zh }}</div>
                 </div>
               </div>
-              <div v-if="lastAdded.examples.length === 0" class="muted small examples-empty">
+              <div v-if="lastAdded.examples.length === 0" class="examples-empty">
                 这个词暂无例句
               </div>
             </div>
           </template>
 
           <template v-else-if="initialLoad">
-            <div class="empty-state muted">加载中…</div>
+            <div class="empty-state">
+              <p class="muted">加载中…</p>
+            </div>
           </template>
 
           <template v-else>
@@ -155,8 +142,8 @@ onUnmounted(stopPolling);
           </template>
         </section>
 
-        <!-- Recent: single row of 4 cards -->
-        <section class="recent">
+        <!-- Recent: 4 cards in one row -->
+        <section class="recent-section">
           <div class="section-head">
             <h2>最近添加</h2>
             <RouterLink to="/library" class="link">查看全部 →</RouterLink>
@@ -175,67 +162,45 @@ onUnmounted(stopPolling);
 
       <!-- ─── RIGHT SIDEBAR ─────────────────────────────── -->
       <aside class="col-side">
-        <!-- Weak words (replaces heatmap) -->
-        <WeakWords />
-
-        <!-- BIG today's review -->
-        <section class="widget glass due-big-widget">
-          <div class="widget-head">
-            <h3>今日待复习</h3>
+        <!-- Consolidated stats card: due (big) + 3 mini stats -->
+        <section class="stats-card glass">
+          <div class="due-row">
+            <span class="due-num" :class="{ none: stats.due_today === 0 }">{{ stats.due_today }}</span>
+            <span class="due-unit">个</span>
           </div>
-          <div class="due-content">
-            <div class="due-number" :class="{ none: stats.due_today === 0 }">
-              <span class="big-num">{{ stats.due_today }}</span>
-              <span class="unit">个</span>
+          <p class="due-hint">
+            {{
+              stats.due_today === 0
+                ? "今天没有需要复习的词，加几个新词吧"
+                : "今日待复习 · 趁热打铁巩固"
+            }}
+          </p>
+          <RouterLink
+            to="/practice"
+            class="btn btn-primary due-btn"
+          >
+            {{ stats.due_today > 0 ? "开始练习 →" : "去练习页" }}
+          </RouterLink>
+          <div class="stats-row">
+            <div class="stat-mini">
+              <div class="stat-num">{{ stats.total }}</div>
+              <div class="stat-label">总数</div>
             </div>
-            <p class="muted due-hint">
-              {{
-                stats.due_today === 0
-                  ? "今天没有需要复习的词，加几个新词吧"
-                  : "到点要再见一面的词，趁热打铁巩固一下"
-              }}
-            </p>
-            <RouterLink
-              v-if="stats.due_today > 0"
-              to="/practice"
-              class="btn btn-primary big-btn"
-            >
-              开始练习 →
-            </RouterLink>
-            <RouterLink
-              v-else
-              to="/practice"
-              class="btn btn-ghost big-btn"
-            >
-              去练习页
-            </RouterLink>
+            <div class="stat-mini">
+              <div class="stat-num">{{ stats.mastered }}</div>
+              <div class="stat-label">已掌握</div>
+            </div>
+            <div class="stat-mini">
+              <div class="stat-num">{{ stats.added_this_week }}</div>
+              <div class="stat-label">本周</div>
+            </div>
           </div>
         </section>
 
-        <!-- 3 compact stats -->
-        <section class="stat-row">
-          <div class="stat glass">
-            <span class="stat-icon">📚</span>
-            <span class="stat-info">
-              <span class="stat-num">{{ stats.total }}</span>
-              <span class="muted stat-label">总数</span>
-            </span>
-          </div>
-          <div class="stat glass">
-            <span class="stat-icon">✨</span>
-            <span class="stat-info">
-              <span class="stat-num">{{ stats.mastered }}</span>
-              <span class="muted stat-label">已掌握</span>
-            </span>
-          </div>
-          <div class="stat glass">
-            <span class="stat-icon">🚀</span>
-            <span class="stat-info">
-              <span class="stat-num">{{ stats.added_this_week }}</span>
-              <span class="muted stat-label">本周</span>
-            </span>
-          </div>
-        </section>
+        <!-- Weak words: fills remaining vertical space -->
+        <div class="weak-fill">
+          <WeakWords />
+        </div>
       </aside>
     </div>
   </div>
@@ -245,26 +210,41 @@ onUnmounted(stopPolling);
 .dashboard {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 22px;
+  height: calc(100vh - 68px);
+  min-height: 0;
 }
 
 /* Page head */
-.page-head { flex-shrink: 0; }
+.page-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
 .page-head h1 {
   font-family: var(--font-serif);
-  font-size: 22px;
+  font-size: 26px;
   font-weight: 700;
   letter-spacing: -0.02em;
   margin: 0;
 }
-.page-head p { margin: 2px 0 0; font-size: 13px; }
+.page-head p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
 .small { font-size: 12px; }
 
-/* Body grid — fills width; columns size to natural content */
+/* Body grid */
 .body-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.65fr) minmax(340px, 1fr);
-  gap: 32px;
+  grid-template-columns: minmax(0, 1.6fr) 260px;
+  gap: 22px;
+  flex: 1;
+  min-height: 0;
 }
 
 .col-main,
@@ -276,61 +256,53 @@ onUnmounted(stopPolling);
   min-width: 0;
 }
 
-/* ─── LEFT COLUMN ─────────────────────────────────── */
+/* ─── LEFT ────────────────────────────────────────── */
 
-/* AddBar — auto height */
 .addbar { flex-shrink: 0; }
 
-/* Preview — auto height, no internal scroll (page handles overflow now) */
 .preview {
-  padding: 18px 22px;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  padding: 22px 26px;
   border-left: 3px solid var(--brand);
-}
-
-.preview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-shrink: 0;
+  gap: 6px;
 }
 
 .word-row {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 14px;
   flex-wrap: wrap;
-  min-width: 0;
+  flex-shrink: 0;
 }
 
 .word-text {
   font-family: var(--font-serif);
-  font-size: clamp(24px, 2.5vw, 30px);
+  font-size: 34px;
   font-weight: 700;
   letter-spacing: -0.02em;
-  color: var(--text-primary);
   line-height: 1.1;
+  color: var(--text-primary);
 }
 
 .speaker {
   appearance: none;
   border: none;
   background: var(--glass-bg-dim);
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   font-size: 14px;
   cursor: pointer;
-  transition: background 200ms ease, transform 200ms ease;
   align-self: center;
+  transition: background 200ms, transform 200ms;
 }
-.speaker:hover { transform: scale(1.08); background: var(--brand-soft); }
+.speaker:hover { background: var(--brand-soft); transform: scale(1.08); }
 
 .phonetic {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   color: var(--text-tertiary);
 }
@@ -338,19 +310,11 @@ onUnmounted(stopPolling);
 .pos {
   font-family: var(--font-serif);
   font-style: italic;
-  padding: 2px 8px;
+  font-size: 12px;
+  padding: 1px 8px;
   border-radius: 6px;
   background: var(--brand-soft);
   color: var(--brand);
-  font-size: 11px;
-}
-
-.practice-btn {
-  text-decoration: none;
-  padding: 6px 14px;
-  font-size: 13px;
-  white-space: nowrap;
-  flex-shrink: 0;
 }
 
 .translation {
@@ -361,45 +325,31 @@ onUnmounted(stopPolling);
   word-wrap: break-word;
 }
 
-.examples-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  flex-shrink: 0;
-}
-
-.dot-purple {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--brand);
-}
-
-/* Examples list — natural height, no internal scroll */
 .examples {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 .example {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--glass-bg-dim);
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--brand) 5%, transparent);
   border: 1px solid var(--hairline);
-  flex-shrink: 0;
+  align-items: flex-start;
 }
 
 .example-num {
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: var(--brand-soft);
   color: var(--brand);
@@ -410,39 +360,55 @@ onUnmounted(stopPolling);
   justify-content: center;
 }
 
-.example-body { min-width: 0; flex: 1; }
+.example-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+}
+
 .example-en {
   font-family: var(--font-serif);
   font-style: italic;
-  font-size: 14px;
+  font-size: 14.5px;
+  line-height: 1.6;
   color: var(--text-primary);
-  line-height: 1.5;
 }
+
 .example-zh {
-  margin-top: 2px;
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.55;
 }
 
 .examples-empty {
-  text-align: center;
-  padding: 20px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .empty-state {
-  min-height: 180px;
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 6px;
   text-align: center;
+  color: var(--text-secondary);
 }
-.empty-state .emoji { font-size: 36px; line-height: 1; }
+.empty-state .emoji { font-size: 40px; line-height: 1; }
 .empty-state p { margin: 0; }
+.muted { color: var(--text-secondary); }
+.tertiary { color: var(--text-tertiary); }
 
-/* Recent — auto height, 4 cards in a single row */
-.recent { flex-shrink: 0; }
+/* Recent */
+.recent-section { flex-shrink: 0; }
 
 .section-head {
   display: flex;
@@ -450,18 +416,18 @@ onUnmounted(stopPolling);
   justify-content: space-between;
   margin-bottom: 8px;
 }
-
 .section-head h2 {
-  font-size: 14px;
-  font-weight: 600;
   margin: 0;
-  letter-spacing: -0.01em;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
 }
-
 .link {
   text-decoration: none;
   color: var(--brand);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -479,118 +445,121 @@ onUnmounted(stopPolling);
 }
 .hint-card.error { color: var(--danger); }
 
-/* ─── RIGHT COLUMN ────────────────────────────────── */
+/* ─── RIGHT ───────────────────────────────────────── */
 
-.widget {
-  padding: 14px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.widget-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-}
-
-.widget-head h3 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-
-/* Due widget — natural height, no flex stretch */
-.due-big-widget {
-  padding: 24px 20px;
-}
-
-.due-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
+.stats-card {
+  padding: 22px 22px 18px;
   text-align: center;
-  padding: 8px 0;
-  min-height: 0;
+  flex-shrink: 0;
 }
 
-.due-number {
+.due-row {
   display: flex;
   align-items: baseline;
+  justify-content: center;
   gap: 6px;
 }
 
-.big-num {
+.due-num {
   font-family: var(--font-serif);
-  font-size: clamp(60px, 7vw, 96px);
+  font-size: 68px;
   font-weight: 700;
-  letter-spacing: -0.03em;
   line-height: 1;
   background: linear-gradient(135deg, var(--brand) 0%, var(--accent) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
+  letter-spacing: -0.03em;
 }
-
-.due-number.none .big-num {
+.due-num.none {
   background: none;
-  color: var(--text-tertiary);
   -webkit-text-fill-color: var(--text-tertiary);
+  color: var(--text-tertiary);
 }
 
-.unit {
-  font-size: 18px;
+.due-unit {
+  font-size: 13px;
   color: var(--text-tertiary);
 }
 
 .due-hint {
-  font-size: 13px;
-  max-width: 280px;
-  line-height: 1.5;
-  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 6px 0 14px;
+  line-height: 1.45;
 }
 
-.big-btn {
+.due-btn {
+  display: inline-block;
+  padding: 8px 22px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   text-decoration: none;
-  padding: 12px 28px;
-  font-size: 15px;
-  font-weight: 600;
 }
 
-/* Stats — 3 compact cards in a row */
-.stat-row {
+.stats-row {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  flex-shrink: 0;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--hairline);
 }
 
-.stat {
-  padding: 10px 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
+.stat-mini {
+  text-align: center;
 }
 
-.stat-icon { font-size: 18px; line-height: 1; flex-shrink: 0; }
-.stat-info { display: flex; flex-direction: column; min-width: 0; }
 .stat-num {
   font-family: var(--font-serif);
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
+  color: var(--text-primary);
+  line-height: 1;
 }
-.stat-label { font-size: 11px; }
 
-/* Narrow screens — stack and shrink grids */
+.stat-label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+  letter-spacing: 0.04em;
+}
+
+.weak-fill {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.weak-fill > :deep(.weak-widget) {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ─── Mobile ──────────────────────────────────────── */
 @media (max-width: 1080px) {
-  .body-grid { grid-template-columns: 1fr; }
-  .recent-grid { grid-template-columns: repeat(2, 1fr); }
+  .dashboard {
+    height: auto;
+    min-height: 0;
+  }
+  .body-grid {
+    grid-template-columns: 1fr;
+    flex: 0 0 auto;
+  }
+  .recent-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .preview {
+    min-height: 280px;
+    flex: 0 0 auto;
+  }
+  .example {
+    flex: 0 0 auto;
+  }
+  .weak-fill {
+    flex: 0 0 auto;
+  }
 }
 </style>
