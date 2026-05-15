@@ -42,6 +42,8 @@ def ensure_schema():
                                    "category VARCHAR(50) DEFAULT ''")
             _add_column_if_missing(conn, "words", "user_id",
                                    "user_id INTEGER REFERENCES users(id)")
+            _add_column_if_missing(conn, "words", "starred",
+                                   "starred BOOLEAN NOT NULL DEFAULT 0")
         if "review_logs" in tables:
             _add_column_if_missing(conn, "review_logs", "user_id",
                                    "user_id INTEGER REFERENCES users(id)")

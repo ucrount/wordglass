@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from .db import Base
@@ -44,11 +44,16 @@ class Word(Base):
     review_count = Column(Integer, default=0)
     correct_count = Column(Integer, default=0)
     next_review_at = Column(DateTime, default=datetime.utcnow, index=True)
+    starred = Column(Boolean, nullable=False, default=False, server_default="0", index=True)
 
     examples = relationship(
         "Example", back_populates="word", cascade="all, delete-orphan", order_by="Example.id"
     )
     reviews = relationship("ReviewLog", back_populates="word", cascade="all, delete-orphan")
+
+    @property
+    def wrong_count(self) -> int:
+        return max(0, (self.review_count or 0) - (self.correct_count or 0))
 
 
 class Example(Base):

@@ -17,6 +17,10 @@ class WordCreate(BaseModel):
     text: str = Field(..., min_length=1, max_length=100)
 
 
+class StarUpdate(BaseModel):
+    starred: bool
+
+
 class WordOut(BaseModel):
     id: int
     text: str
@@ -27,6 +31,7 @@ class WordOut(BaseModel):
     mastery: int
     review_count: int
     correct_count: int
+    starred: bool
     created_at: datetime
     next_review_at: datetime
     examples: List[ExampleOut]
@@ -42,6 +47,8 @@ class WordBrief(BaseModel):
     translation: str
     category: str
     mastery: int
+    starred: bool
+    wrong_count: int
     created_at: datetime
 
     class Config:

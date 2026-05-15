@@ -7,6 +7,7 @@ const props = defineProps<{ wordId: number | null }>();
 const emit = defineEmits<{
   (e: "close"): void;
   (e: "deleted", wordId: number): void;
+  (e: "starred-changed", wordId: number, starred: boolean): void;
 }>();
 
 const word = ref<WordOut | null>(null);
@@ -45,6 +46,20 @@ async function handleDelete() {
     error.value = e.message || "删除失败";
   } finally {
     deleting.value = false;
+  }
+}
+
+async function toggleStar() {
+  if (!word.value) return;
+  const target = !word.value.starred;
+  word.value.starred = target;
+  try {
+    await api.setStarred(word.value.id, target);
+    emit("starred-changed", word.value.id, target);
+  } catch (e: any) {
+    if (word.value) word.value.starred = !target;
+    error.value = e.message || "操作失败";
+    setTimeout(() => { error.value = ""; }, 4000);
   }
 }
 
@@ -96,6 +111,13 @@ onUnmounted(() => window.removeEventListener("keydown", handleKey));
                     @click="speak(word.text)"
                     title="朗读"
                   >🔊</button>
+                </div>
+                <div class="head-actions">
+                  <button
+                    class="star-btn"
+                    :class="{ on: word.starred }"
+                    @click="toggleStar"
+                  >{{ word.starred ? '★ 已重点' : '☆ 标重点' }}</button>
                 </div>
                 <div class="meta">
                   <span v-if="word.phonetic" class="phonetic">{{ word.phonetic }}</span>
@@ -261,6 +283,34 @@ onUnmounted(() => window.removeEventListener("keydown", handleKey));
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+.head-actions {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 2px;
+}
+.star-btn {
+  appearance: none;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg-dim);
+  padding: 6px 14px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+.star-btn:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--glass-border));
+  color: var(--text-primary);
+}
+.star-btn.on {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--glass-border));
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .phonetic {

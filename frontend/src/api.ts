@@ -16,6 +16,7 @@ export interface WordOut {
   mastery: number;
   review_count: number;
   correct_count: number;
+  starred: boolean;
   created_at: string;
   next_review_at: string;
   examples: Example[];
@@ -28,6 +29,8 @@ export interface WordBrief {
   translation: string;
   category: string;
   mastery: number;
+  starred: boolean;
+  wrong_count: number;
   created_at: string;
 }
 
@@ -37,7 +40,16 @@ export interface CategoriesOut {
 }
 
 export type WordPreview =
-  | { found: true; text: string; phonetic: string; pos: string; translation: string; already_saved: boolean }
+  | {
+      found: true;
+      text: string;
+      phonetic: string;
+      pos: string;
+      translation: string;
+      already_saved: boolean;
+      id: number | null;
+      starred: boolean;
+    }
   | { found: false; text: string };
 
 export interface Stats {
@@ -262,6 +274,11 @@ export const api = {
   getWord: (id: number) => request<WordOut>(`/api/words/${id}`),
   deleteWord: (id: number) =>
     request<{ ok: boolean }>(`/api/words/${id}`, { method: "DELETE" }),
+  setStarred: (id: number, starred: boolean) =>
+    request<WordOut>(`/api/words/${id}/star`, {
+      method: "POST",
+      body: JSON.stringify({ starred }),
+    }),
   listCategories: () => request<CategoriesOut>("/api/words/categories"),
   recategorize: () =>
     request<{ updated: number; total: number }>("/api/words/recategorize", { method: "POST" }),

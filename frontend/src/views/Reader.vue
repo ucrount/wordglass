@@ -88,6 +88,8 @@ interface SelectedWord {
   pos: string;
   translation: string;
   alreadySaved: boolean;
+  id: number | null;
+  starred: boolean;
   adding: boolean;
   addError: string;
 }
@@ -258,7 +260,8 @@ function onWordClick(event: MouseEvent, word: string) {
   selected.value = {
     text: word, loading: true, found: false,
     phonetic: "", pos: "", translation: "",
-    alreadySaved: false, adding: false, addError: "",
+    alreadySaved: false, id: null, starred: false,
+    adding: false, addError: "",
   };
   usage.value = { loading: true, text: "", error: "" };
 
@@ -277,6 +280,7 @@ async function loadPreview(word: string) {
         ...selected.value, loading: false, found: true,
         phonetic: data.phonetic, pos: data.pos,
         translation: data.translation, alreadySaved: data.already_saved,
+        id: data.id, starred: data.starred,
       };
     } else {
       selected.value = { ...selected.value, loading: false, found: false };
@@ -327,14 +331,34 @@ async function addSelectedWord() {
   selected.value.adding = true;
   selected.value.addError = "";
   try {
-    await api.addWord(selected.value.text);
+    const created = await api.addWord(selected.value.text);
     if (selected.value) {
-      selected.value = { ...selected.value, adding: false, alreadySaved: true };
+      selected.value = {
+        ...selected.value,
+        adding: false,
+        alreadySaved: true,
+        id: created.id,
+        starred: created.starred,
+      };
       addedCount.value++;
     }
   } catch (e: any) {
     if (selected.value) {
       selected.value = { ...selected.value, adding: false, addError: e.message || "添加失败" };
+    }
+  }
+}
+
+async function togglePanelStar() {
+  if (!selected.value || selected.value.id == null) return;
+  const target = !selected.value.starred;
+  selected.value.starred = target;
+  const id = selected.value.id;
+  try {
+    await api.setStarred(id, target);
+  } catch {
+    if (selected.value && selected.value.id === id) {
+      selected.value.starred = !target;
     }
   }
 }
@@ -522,6 +546,12 @@ onBeforeUnmount(() => {
             >
               {{ selected.adding ? "添加中…" : "+ 加入单词库" }}
             </button>
+            <button
+              v-if="selected.id != null"
+              class="wp-star"
+              :class="{ on: selected.starred }"
+              @click="togglePanelStar"
+            >{{ selected.starred ? '★ 重点' : '☆ 标重点' }}</button>
             <button class="btn btn-ghost wp-close-btn" @click="closeSelected">关闭</button>
           </div>
           <div v-if="selected.addError" class="wp-error">{{ selected.addError }}</div>
@@ -548,6 +578,12 @@ onBeforeUnmount(() => {
             >
               {{ selected.adding ? "添加中…" : "+ 加入单词库" }}
             </button>
+            <button
+              v-if="selected.id != null"
+              class="wp-star"
+              :class="{ on: selected.starred }"
+              @click="togglePanelStar"
+            >{{ selected.starred ? '★ 重点' : '☆ 标重点' }}</button>
             <button class="btn btn-ghost wp-close-btn" @click="closeSelected">关闭</button>
           </div>
           <div v-if="selected.addError" class="wp-error">{{ selected.addError }}</div>
@@ -1085,6 +1121,29 @@ onBeforeUnmount(() => {
 .wp-close-btn {
   padding: 6px 14px;
   font-size: 13px;
+}
+
+.wp-star {
+  appearance: none;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg-dim);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+.wp-star:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--glass-border));
+  color: var(--text-primary);
+}
+.wp-star.on {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--glass-border));
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .wp-error {

@@ -12,6 +12,7 @@ interface CategoryBucket {
   words: WordBrief[];
   avgMastery: number;
   isUncategorized: boolean;
+  isStarred: boolean;
 }
 
 const router = useRouter();
@@ -45,7 +46,16 @@ function toBucket(name: string, words: WordBrief[], isUncat: boolean): CategoryB
     words: sorted,
     avgMastery: avg,
     isUncategorized: isUncat,
+    isStarred: false,
   };
+}
+
+function sortStarred(words: WordBrief[]): WordBrief[] {
+  return [...words].sort((a, b) => {
+    if (b.wrong_count !== a.wrong_count) return b.wrong_count - a.wrong_count;
+    if (a.mastery !== b.mastery) return a.mastery - b.mastery;
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
 }
 
 const buckets = computed<CategoryBucket[]>(() => {
@@ -56,6 +66,22 @@ const buckets = computed<CategoryBucket[]>(() => {
     byCat[cat].push(w);
   }
   const result: CategoryBucket[] = [];
+
+  // ⭐ 重点 first if any
+  const starred = allWords.value.filter((w) => w.starred);
+  if (starred.length > 0) {
+    const avg =
+      starred.reduce((s, w) => s + (w.mastery || 0), 0) / starred.length;
+    result.push({
+      name: "⭐ 重点",
+      total: starred.length,
+      words: sortStarred(starred),
+      avgMastery: avg,
+      isUncategorized: false,
+      isStarred: true,
+    });
+  }
+
   if ((byCat["未分类"] || []).length > 0) {
     result.push(toBucket("未分类", byCat["未分类"], true));
   }
@@ -152,6 +178,26 @@ async function onDeleted(id: number) {
   }
 }
 
+async function toggleStar(w: WordBrief, event?: MouseEvent) {
+  event?.stopPropagation();
+  const target = !w.starred;
+  w.starred = target;
+  try {
+    await api.setStarred(w.id, target);
+  } catch (e: any) {
+    w.starred = !target;
+    message.value = e.message || "操作失败";
+    setTimeout(() => {
+      message.value = "";
+    }, 4000);
+  }
+}
+
+function onStarredChanged(id: number, starred: boolean) {
+  const w = allWords.value.find((x) => x.id === id);
+  if (w) w.starred = starred;
+}
+
 function practiceCategory(b: CategoryBucket) {
   if (b.total === 0) return;
   const ids = b.words.map((w) => w.id).join(",");
@@ -244,7 +290,7 @@ onMounted(loadAll);
           v-for="b in buckets"
           :key="b.name"
           class="tile glass"
-          :class="{ uncat: b.isUncategorized }"
+          :class="{ uncat: b.isUncategorized, starred: b.isStarred }"
           @click="enterCategory(b.name)"
         >
           <div class="tile-head">
@@ -327,6 +373,12 @@ onMounted(loadAll);
               <div class="row-w">{{ w.text }}</div>
               <div class="row-t">{{ w.translation || "（无翻译）" }}</div>
             </div>
+            <button
+              class="row-star"
+              :class="{ on: w.starred }"
+              :title="w.starred ? '取消重点' : '设为重点'"
+              @click="toggleStar(w, $event)"
+            >{{ w.starred ? '★' : '☆' }}</button>
             <div class="row-pips">
               <span
                 v-for="(on, i) in masteryPips(w.mastery)"
@@ -361,6 +413,12 @@ onMounted(loadAll);
                 <span v-if="w.category" class="row-cat">· {{ w.category }}</span>
               </div>
             </div>
+            <button
+              class="row-star"
+              :class="{ on: w.starred }"
+              :title="w.starred ? '取消重点' : '设为重点'"
+              @click="toggleStar(w, $event)"
+            >{{ w.starred ? '★' : '☆' }}</button>
             <div class="row-pips">
               <span
                 v-for="(on, i) in masteryPips(w.mastery)"
@@ -378,7 +436,12 @@ onMounted(loadAll);
       <div v-if="message" class="msg-toast glass-dim">{{ message }}</div>
     </Transition>
 
-    <WordDetail :word-id="detailId" @close="closeDetail" @deleted="onDeleted" />
+    <WordDetail
+      :word-id="detailId"
+      @close="closeDetail"
+      @deleted="onDeleted"
+      @starred-changed="onStarredChanged"
+    />
   </div>
 </template>
 
@@ -523,6 +586,17 @@ onMounted(loadAll);
     transparent 60%
   );
 }
+.tile.starred {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--glass-border));
+}
+.tile.starred::before {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent) 10%, transparent),
+    transparent 60%
+  );
+}
+.tile.starred .tile-name { color: var(--accent); }
 
 .tile-head {
   display: flex;
@@ -699,6 +773,21 @@ onMounted(loadAll);
   color: var(--brand);
   margin-left: 4px;
 }
+.row-star {
+  appearance: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px 6px;
+  color: var(--text-tertiary);
+  transition: color 150ms ease, transform 100ms ease;
+  flex-shrink: 0;
+}
+.row-star:hover { color: var(--accent); }
+.row-star.on { color: var(--accent); }
+.row-star:active { transform: scale(0.85); }
 .row-pips {
   display: flex;
   gap: 2.5px;

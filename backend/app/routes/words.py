@@ -20,7 +20,7 @@ from ..log import log_event, new_request_id, now_ms
 from ..models import Example, User, Word
 from ..offline_dict import has_ecdict, has_tatoeba, lookup_ecdict
 from ..providers import ProviderError, build_provider
-from ..schemas import WordBrief, WordCreate, WordOut
+from ..schemas import StarUpdate, WordBrief, WordCreate, WordOut
 from ..settings_store import get_settings, is_configured
 
 router = APIRouter(prefix="/api/words", tags=["words"], dependencies=[Depends(current_user)])
@@ -60,7 +60,7 @@ def preview_word(
     hit = lookup_ecdict(text.strip().lower())
     if hit is None:
         return {"found": False, "text": text}
-    existing = db.query(Word.id).filter(
+    existing = db.query(Word).filter(
         Word.text == hit["text"], Word.user_id == user.id
     ).first()
     return {
@@ -70,6 +70,8 @@ def preview_word(
         "pos": hit["pos"],
         "translation": hit["translation"],
         "already_saved": existing is not None,
+        "id": existing.id if existing else None,
+        "starred": bool(existing.starred) if existing else False,
     }
 
 
@@ -244,6 +246,22 @@ def delete_word(word_id: int, db: Session = Depends(get_db), user: User = Depend
     db.delete(w)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/{word_id}/star", response_model=WordOut)
+def set_starred(
+    word_id: int,
+    body: StarUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    w = db.get(Word, word_id)
+    if not w or w.user_id != user.id:
+        raise HTTPException(status_code=404, detail="word not found")
+    w.starred = body.starred
+    db.commit()
+    db.refresh(w)
+    return w
 
 
 @router.post("/usage")
